@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Local test/output audio artifacts
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.wma
+*.aac
+*.mp2
+*.amr
+*.ogg
+
+.DS_Store
+Thumbs.db
