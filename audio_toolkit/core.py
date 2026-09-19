@@ -30,7 +30,10 @@ class AudioToolError(Exception):
 
 
 def _format_for(path: str | Path) -> str:
-    ext = Path(path).suffix.lower().lstrip(".")
+    p = Path(path)
+    if str(p) in ("", "."):  # Path("") normalizes to "." - both mean "no path given"
+        raise AudioToolError("No output file chosen.")
+    ext = p.suffix.lower().lstrip(".")
     if ext not in SUPPORTED_FORMATS:
         raise AudioToolError(
             f"Unsupported format '.{ext}'. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}"
@@ -87,6 +90,10 @@ def run_ffmpeg_filter(in_path: str | Path, out_path: str | Path, filter_str: str
         raise AudioToolError(f"Input file not found: {in_path}")
     _format_for(in_path)
     _format_for(out_path)
+    if out_path.exists() and in_path.resolve() == out_path.resolve():
+        raise AudioToolError(
+            "Output file must be different from the input file (ffmpeg can't edit audio in place)."
+        )
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:

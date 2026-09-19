@@ -2,6 +2,11 @@
 
 Convert, cut, trim, split, join, and mix audio files (MP3, FLAC, WAV, M4A, WMA, AAC, MP2, AMR, OGG).
 
+See [layer-mixer/](layer-mixer/README.md) for a separate, browser-based multi-track
+mixer prototype (drag clips to layer/overlap them, per-track pitch/pan/gain) —
+not part of this Python app; its own README explains what it is and its
+claude.ai dependency for Export/Save.
+
 ## Setup
 
 1. Install Python dependencies:
@@ -23,12 +28,14 @@ Convert, cut, trim, split, join, and mix audio files (MP3, FLAC, WAV, M4A, WMA, 
 python -m audio_toolkit
 ```
 
-The waveform is the permanent center of the window — it's always visible,
-above every tool panel, with transport controls (Play/Stop, a live time
-readout, Start/End/Length) directly beneath it, the way a dedicated audio
-editor is laid out. A narrow grouped tool tree (File / Edit / Effects /
-Create / Record) sits to its left and swaps out only the panel to its right
-— the waveform and transport never disappear.
+A single dark, PySide6-based window — no separate "converter" and "editor"
+apps. The waveform is the permanent center of the window — it's always
+visible, with a time ruler above it and transport controls (Play/Stop, a
+live time readout, Start/End/Length) directly beneath it, the way a
+dedicated audio editor is laid out. A grouped tool tree with an icon per
+tool (File / Edit / Effects / Create / Record) sits to its left and swaps
+out only the panel to its right — the waveform and transport never
+disappear.
 
 **Empty state:** click anywhere in the waveform area (or the "Open Audio"
 button in the toolbar) to load a file. Its name, sample rate, channels, and
@@ -43,10 +50,12 @@ toolbar at all times as the one clear "next step" action.
 
 Selecting **Trim / Cut** switches the waveform into drag-to-select mode —
 drag a range and it syncs to the Start/End fields (and to Play, which then
-previews just that selection). Selecting **Split** switches it into
-click-to-add-markers mode, syncing to the Split-at field. Recording and
-Generate automatically open their output when done, so you can immediately
-trim or apply an effect to what you just created.
+previews just that selection); everything outside the selection dims so the
+range stands out. Selecting **Split** switches it into click-to-add-markers
+mode, syncing to the Split-at field. Recording and Generate automatically
+open their output when done, so you can immediately trim or apply an effect
+to what you just created. **Mix** shows a small per-track fader for every
+file added, instead of typing comma-separated gains.
 
 ## CLI
 

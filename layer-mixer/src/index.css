@@ -1,0 +1,146 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* -- surfaces --------------------------------------------------- */
+    --bg: 222 16% 8%;
+    --panel: 222 15% 11%;
+    --panel-alt: 222 14% 13%;
+    --surface: 222 13% 15%;
+    --field: 222 13% 17%;
+    --border: 222 12% 22%;
+    --border-strong: 222 10% 30%;
+
+    /* -- text ---------------------------------------------------------*/
+    --text: 220 25% 93%;
+    --text-muted: 220 12% 62%;
+    --text-dim: 220 10% 42%;
+
+    /* -- accent / semantic -------------------------------------------- */
+    --accent: 219 100% 66%;
+    --accent-strong: 219 100% 74%;
+    --accent-soft: 219 100% 66%;
+    --record: 350 100% 68%;
+    --solo: 38 100% 58%;
+    --ok: 158 70% 51%;
+
+    /* shadcn compatibility shims (used by a couple of primitives) */
+    --background: var(--bg);
+    --foreground: var(--text);
+    --card: var(--panel);
+    --card-foreground: var(--text);
+    --popover: var(--panel-alt);
+    --popover-foreground: var(--text);
+    --primary: var(--accent);
+    --primary-foreground: 222 16% 8%;
+    --secondary: var(--field);
+    --secondary-foreground: var(--text);
+    --muted: var(--field);
+    --muted-foreground: var(--text-muted);
+    --destructive: var(--record);
+    --destructive-foreground: 222 16% 8%;
+    --input: var(--field);
+    --ring: var(--accent);
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply text-foreground;
+    background: hsl(var(--bg));
+    font-family: "Sora", ui-sans-serif, system-ui, sans-serif;
+    overflow: hidden;
+  }
+  ::selection {
+    background: hsl(var(--accent) / 0.35);
+  }
+}
+
+@layer utilities {
+  .font-mono-tech {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* -- scrollbars ------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border-strong)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--border-strong));
+  border-radius: 6px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--text-dim));
+}
+
+/* -- range inputs (faders / pan / pitch) ------------------------------ */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: hsl(var(--field));
+  border: 1px solid hsl(var(--border));
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -6px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: hsl(var(--accent));
+  border: 2px solid hsl(222 16% 10%);
+  box-shadow: 0 0 0 1px hsl(var(--accent-strong) / 0.5);
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid hsl(var(--accent-strong));
+  outline-offset: 2px;
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: hsl(var(--field));
+  border: 1px solid hsl(var(--border));
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: hsl(var(--accent));
+  border: 2px solid hsl(222 16% 10%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
