@@ -16,9 +16,12 @@ AppPublisher=Tonewright
 DefaultDirName={autopf}\Tonewright
 DisableProgramGroupPage=yes
 DisableDirPage=auto
-; Per-user by default (no administrator prompt); the wizard offers "for all users" as a choice.
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+; Installs into C:\Program Files\Tonewright (one UAC prompt). Only an administrator can change files there, so
+; other programs running as the user cannot swap the app's Python or code for something else. Settings, favourites
+; and the log stay in the user's AppData\Roaming\Tonewright, because Program Files is read-only for normal use.
+; "/CURRENTUSER" on the command line still gives a per-user install without a prompt (used by the build's own test).
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=commandline
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
@@ -46,6 +49,8 @@ english.RemoveSettingsPrompt=Also delete your Tonewright settings, favourites an
 ukrainian.RemoveSettingsPrompt=Видалити також ваші налаштування, обране та журнал Tonewright?%n%n(%1)%n%nНатисніть «Ні», щоб зберегти їх для майбутнього встановлення.
 english.ThirdPartyNotices=Third-party licences
 ukrainian.ThirdPartyNotices=Ліцензії сторонніх компонентів
+english.OldPerUserCopy=An older per-user copy of Tonewright is installed for your account. After this setup finishes, remove it in Settings > Apps so only the Program Files copy remains. Your settings are kept.
+ukrainian.OldPerUserCopy=Для вашого облікового запису встановлено стару копію Tonewright. Після завершення встановлення видаліть її в Параметри > Програми, щоб лишилася тільки копія в Program Files. Ваші налаштування збережуться.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -72,6 +77,15 @@ Filename: "{app}\python\pythonw.exe"; Parameters: "-m tonewright"; WorkingDir: "
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+// An earlier per-user install is only reported, never run: an elevated setup must not execute a program from a
+// folder that the user (or anything running as the user) can write to.
+procedure InitializeWizard();
+begin
+  if IsAdminInstallMode and
+     RegKeyExists(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6B0F2D4E-3A5C-4E67-9C1D-7A2E58B4F0A1}_is1') then
+    MsgBox(CustomMessage('OldPerUserCopy'), mbInformation, MB_OK);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Settings: String;
