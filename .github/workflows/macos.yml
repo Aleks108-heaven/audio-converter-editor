@@ -31,8 +31,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: FFmpeg for the tests
-        run: brew install ffmpeg
+      - name: FFmpeg for the tests (the same pinned build that ships in the app)
+        run: |
+          bash macos/fetch_ffmpeg.sh "$RUNNER_TEMP/ffmpeg"
+          echo "TONEWRIGHT_FFMPEG_DIR=$RUNNER_TEMP/ffmpeg" >> "$GITHUB_ENV"
       - name: Libraries (the exact versions in requirements.lock.txt)
         run: |
           python -m venv .venv

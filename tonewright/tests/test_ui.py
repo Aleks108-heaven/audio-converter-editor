@@ -516,7 +516,7 @@ def test_convert_can_be_cancelled(loaded, qapp, tmp_path):
     loaded.set_mode("convert")
     loaded.convert_bar.path.setText(str(tmp_path / "o"))
     loaded.convert_bar.same_folder.setChecked(False)
-    loaded.convert_panel.picker._pick_format("flac")
+    loaded.convert_panel.picker._pick_format("ogg")           # slow enough that even a fast Mac is still busy when we stop it
     loaded.convert_bar.primary.click()
     assert wait_until(qapp, lambda: any(i.status == "converting" for i in loaded.state.items))
     loaded.convert_bar.stop_btn.click()

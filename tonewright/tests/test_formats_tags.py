@@ -20,7 +20,13 @@ EXPECTED_CODEC = {"mp3": "mp3", "m4a": "aac", "m4b": "aac", "aac": "aac", "ogg":
                   "amr": "amr_nb", "amrwb": "amr_wb"}
 
 
-@pytest.mark.parametrize("key", list(formats.FORMATS))
+def _writable(key: str):
+    """A format, skipped when the installed FFmpeg has no encoder for it (the macOS build has no AMR)."""
+    missing = not ffmpeg.has_encoder(formats.FORMATS[key].codec)
+    return pytest.param(key, marks=pytest.mark.skipif(missing, reason=f"this FFmpeg cannot encode {key}"))
+
+
+@pytest.mark.parametrize("key", [_writable(k) for k in formats.FORMATS])
 def test_every_format_encodes_and_probes_as_expected(tmp_path, key):
     spec = formats.FORMATS[key]
     path = tmp_path / f"t{spec.ext}"

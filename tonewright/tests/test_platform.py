@@ -110,9 +110,11 @@ def test_the_missing_ffmpeg_message_names_the_right_command(monkeypatch):
 
 
 # ------------------------------------------------------------------ formats the installed FFmpeg can write
-def test_every_format_is_offered_when_ffmpeg_has_all_encoders():
+def test_the_formats_offered_are_exactly_those_ffmpeg_can_encode():
     from tonewright.core import formats
-    assert formats.available_keys() == list(formats.FORMATS)             # the full builds used on Windows
+    expected = [k for k, spec in formats.FORMATS.items() if ffmpeg.has_encoder(spec.codec)]
+    assert formats.available_keys() == expected
+    assert {"mp3", "m4a", "m4b", "aac", "flac", "wav", "aiff"} <= set(expected)
 
 
 def test_formats_without_an_encoder_are_hidden(monkeypatch):

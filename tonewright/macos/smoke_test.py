@@ -59,7 +59,7 @@ def main() -> int:
                 ok = r.returncode == 0 and probe.returncode == 0 and float(json.loads(probe.stdout)["format"]["duration"]) > 0.9
                 check(f"convert to {ext}", ok, r.stderr[:80])
 
-    portaudio = [p for p in app.rglob("libportaudio*") if p.is_file()]
+    portaudio = [p for p in app.rglob("libportaudio*.dylib") if p.is_file()]      # (the package also carries Windows .dll files)
     check("PortAudio (sound output and recording) is bundled", bool(portaudio), portaudio[0].name if portaudio else "")
 
     plugin_dirs = [p for p in app.rglob("imageformats") if p.is_dir()]
