@@ -1,5 +1,9 @@
 # Audio Toolkit
 
+> **New:** [tonewright/](tonewright/README.md) is a newer, separate audio converter, editor and audiobook maker (one window,
+> real editing with undo, effect dialogs, tags and cover art, M4B chapters). It has its own setup (`Tonewright.bat`) and does
+> not use this toolkit's code. The toolkit below is unchanged.
+
 Convert, cut, trim, split, join, and mix audio files (MP3, FLAC, WAV, M4A, WMA, AAC, MP2, AMR, OGG).
 
 See [layer-mixer/](layer-mixer/README.md) for a separate, browser-based multi-track
@@ -10,14 +14,19 @@ claude.ai dependency for Export/Save.
 ## Setup
 
 1. Install Python dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
+
 2. Install ffmpeg (required for every format except WAV) and make sure it's on PATH:
+
    ```powershell
    winget install ffmpeg
    ```
+
    Verify with:
+
    ```bash
    ffmpeg -version
    ```

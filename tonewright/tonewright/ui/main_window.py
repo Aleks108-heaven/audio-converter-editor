@@ -1,0 +1,1085 @@
+"""The main window: header, toolbar, library, stage, inspectors and the batch flows."""
+from __future__ import annotations
+
+import base64
+import shutil
+from pathlib import Path
+from typing import Callable, Optional
+
+from PySide6.QtCore import QByteArray, QPoint, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow,
+                               QMenu, QMessageBox, QPushButton, QSplitter, QStackedWidget, QToolButton, QVBoxLayout,
+                               QWidget)
+
+from .. import __version__
+from ..core import audiobook, formats
+from ..core import effects as fx
+from ..core import ffmpeg
+from ..core import tags as tagmod
+from ..core.audiobook import BookOptions, Part
+from ..core.convert import convert_all
+from ..core.timefmt import format_size, format_time
+from . import icons, theme
+from .audiobook_panel import AudiobookPanel
+from .controller import Controller
+from .convert_panel import ConvertPanel
+from .dialogs import AboutDialog
+from .edit_panel import EditPanel
+from .jobs import Job, JobBar
+from .library import LibraryPanel
+from .palette import Command, CommandPalette
+from .stage import Stage
+from .state import AppState, LibraryItem
+from .tags_panel import TagsPage
+from .tasks import run_task
+from .transport import TransportBar
+from .widgets import divider, icon_button, make_button
+
+MODE_INFO = [("convert", "Convert", "convert"), ("edit", "Edit", "waveform"), ("tags", "Tags", "tag"),
+             ("audiobook", "Audiobook", "book")]
+RIGHT_PAGE = {"edit": 0, "convert": 1, "audiobook": 2}
+BOTTOM_PAGE = {"edit": 0, "convert": 1, "audiobook": 2, "tags": 0}
+
+
+def enable_dark_title_bar(window: QWidget, dark: bool) -> None:
+    """Ask Windows 10/11 to draw the title bar to match the theme."""
+    try:
+        import ctypes
+        hwnd = int(window.winId())
+        value = ctypes.c_int(1 if dark else 0)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(value), ctypes.sizeof(value))
+        t = theme.current()
+        colour = ctypes.c_int(int(t.bg0[5:7] + t.bg0[3:5] + t.bg0[1:3], 16))      # COLORREF is BGR
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(colour), ctypes.sizeof(colour))
+    except Exception:
+        pass
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, state: AppState) -> None:
+        super().__init__()
+        self.state = state
+        self.actions: dict[str, QAction] = {}
+        self.setWindowTitle("Tonewright")
+        self.setWindowIcon(icons.app_icon())
+        self.setAcceptDrops(True)
+        self.resize(1480, 900)
+        self.setMinimumSize(1240, 700)
+        self._convert_job: Optional[Job] = None
+        self._book_job: Optional[Job] = None
+        self._book_path_touched = False
+
+        self._build_actions()
+        self._build_ui()
+        self._build_menus()
+        self._wire()
+        self._build_palette()
+        self.set_mode(state.settings.get("last_mode", "edit") if state.settings.get("last_mode") in ("convert", "edit", "tags", "audiobook") else "edit", initial=True)
+        self._restore_geometry()
+        self.update_actions()
+        self._update_title()
+
+    # ================================================================ actions
+    def _act(self, key: str, text: str, slot: Callable, shortcut=None, icon: Optional[str] = None,
+             tip: str = "", checkable: bool = False, checked: bool = False) -> QAction:
+        a = QAction(text, self)
+        if icon:
+            icons.bind(a, icon, 18)
+        if shortcut:
+            seqs = shortcut if isinstance(shortcut, list) else [shortcut]
+            a.setShortcuts([QKeySequence(s) for s in seqs])
+        a.setToolTip(tip or text)
+        a.setCheckable(checkable)
+        if checkable:
+            a.setChecked(checked)
+            a.toggled.connect(slot)
+        else:
+            a.triggered.connect(lambda _=False: slot())
+        a.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+        self.addAction(a)
+        self.actions[key] = a
+        return a
+
+    def _build_actions(self) -> None:
+        # created before the controller exists, so every slot is looked up lazily
+        c = lambda name: (lambda *a: getattr(self.ctl, name)(*a))
+        act = self._act
+        S = QKeySequence
+        act("new", "New…", c("new_document"), "Ctrl+N", "file-new", "New empty file")
+        act("open", "Open…", c("open_dialog"), "Ctrl+O", "open", "Open audio files")
+        act("import_video", "Import audio from video…", c("import_video_dialog"), None, "film")
+        act("save", "Save", c("save"), "Ctrl+S", "save", "Save changes")
+        act("save_as", "Save as…", c("save_as"), "Ctrl+Shift+S", "download", "Save a copy in any format")
+        act("close_item", "Close file", c("close_item"), "Ctrl+W")
+        act("prev_item", "Previous file", lambda: self.ctl.step_item(-1), "Ctrl+PgUp", "skip-start")
+        act("next_item", "Next file", lambda: self.ctl.step_item(1), "Ctrl+PgDown", "skip-end")
+        act("quit", "Quit", self.close, "Ctrl+Q")
+        act("undo", "Undo", c("undo"), "Ctrl+Z", "undo")
+        act("redo", "Redo", c("redo"), ["Ctrl+Y", "Ctrl+Shift+Z"], "redo")
+        act("cut", "Cut", c("cut"), "Ctrl+X", "cut")
+        act("copy", "Copy", c("copy"), "Ctrl+C", "copy")
+        act("paste", "Paste", c("paste"), "Ctrl+V", "paste")
+        act("paste_new", "Paste as new file", c("paste_new"), "Ctrl+Shift+V")
+        act("mix_paste", "Mix paste…", c("mix_paste"), "Ctrl+Shift+M", "layers")
+        act("mix_file", "Mix a file in at the cursor…", c("mix_file"), None, "layers")
+        act("insert_file", "Insert a file at the cursor…", c("insert_file"), None, "plus")
+        act("delete", "Delete", c("delete"), "Del", "trash")
+        act("trim", "Trim to selection", c("trim"), "Ctrl+T", "crop")
+        act("silence_sel", "Silence selection", c("silence_selection"), "Ctrl+L", "silence")
+        act("select_all", "Select all", c("select_all"), "Ctrl+A")
+        act("select_none", "Select none", c("select_none"), "Ctrl+Shift+A")
+        act("goto", "Go to time…", c("goto_time"), "Ctrl+G", "clock")
+        act("add_marker", "Add marker", c("add_marker"), "M", "flag")
+        act("prev_marker", "Previous marker", lambda: self.ctl.step_marker(-1), "[")
+        act("next_marker", "Next marker", lambda: self.ctl.step_marker(1), "]")
+        act("repeat_effect", "Repeat last effect", c("repeat_effect"), "Ctrl+Shift+E", "refresh")
+        act("apply_envelope", "Apply envelope", c("apply_envelope"), None, "check")
+        # view
+        grp = QActionGroup(self)
+        for key, text, ic in (("view_waveform", "Waveform", "waveform"), ("view_spectral", "Spectral", "spectral"),
+                              ("view_envelope", "Envelope", "envelope")):
+            mode = key.split("_")[1]
+            a = act(key, text, (lambda checked, m=mode: checked and self.ctl.set_view_mode(m)), None, ic,
+                    f"{text} view", checkable=True, checked=(mode == "waveform"))
+            grp.addAction(a)
+        act("zoom_in", "Zoom in", lambda: self.stage.zoom_in(), ["Ctrl+=", "Ctrl++"], "zoom-in", "Zoom in")
+        act("zoom_out", "Zoom out", lambda: self.stage.zoom_out(), "Ctrl+-", "zoom-out", "Zoom out")
+        act("zoom_selection", "Zoom to selection", lambda: self.stage.zoom_selection(), "Ctrl+9", "zoom-sel", "Zoom to the selection")
+        act("zoom_fit", "Show everything", lambda: self.stage.zoom_fit(), "Ctrl+0", "zoom-fit", "Fit the whole file")
+        act("zoom_samples", "Zoom to samples", lambda: self.stage.zoom_samples(), None, "zoom-1", "One pixel per sample")
+        act("vzoom_in", "Taller waveform", lambda: self.stage.vzoom(1.5), None, "vzoom-in", "Zoom in vertically")
+        act("vzoom_out", "Shorter waveform", lambda: self.stage.vzoom(1 / 1.5), None, "vzoom-out", "Zoom out vertically")
+        act("show_db", "Show decibel scale", self._toggle_db, None, checkable=True,
+            checked=bool(self.state.settings.get("show_db_scale", True)))
+        act("follow", "Follow the playhead", self._toggle_follow, None, checkable=True,
+            checked=bool(self.state.settings.get("follow_playhead", True)))
+        act("snap_zero", "Snap selections to zero crossings", self._toggle_snap, None, checkable=True,
+            checked=bool(self.state.settings.get("snap_zero_crossings", False)))
+        act("spec_log", "Logarithmic frequency axis", self._toggle_spec_log, None, checkable=True, checked=True)
+        act("theme", "Switch to light theme", self.toggle_theme, None, "sun")
+        # transport
+        act("play", "Play / Pause", c("toggle_play"), "Space", "play", "Play or pause")
+        act("stop", "Stop", self._escape, "Esc", "stop", "Stop")
+        act("loop", "Loop", c("set_loop"), "L", "loop", "Loop playback", checkable=True)
+        act("go_start", "Go to start", c("go_start"), "Home", "skip-start", "Go to the start")
+        act("go_end", "Go to end", c("go_end"), "End", "skip-end", "Go to the end")
+        act("rewind", "Back 5 seconds", lambda: self.ctl.jump(-5), "Ctrl+Left", "rewind", "Back 5 seconds")
+        act("forward", "Forward 5 seconds", lambda: self.ctl.jump(5), "Ctrl+Right", "forward", "Forward 5 seconds")
+        act("record", "Record…", c("record"), "Ctrl+R", "record", "Record from a microphone")
+        # tools
+        act("analyze", "Audio statistics…", c("analyze"), "Ctrl+I", "info")
+        act("spectrum", "Frequency analysis…", c("spectrum"), None, "spectral")
+        act("silence_tools", "Find silence…", c("silence_tools"), None, "silence")
+        act("convert_format", "Convert file format…", c("convert_document_format"), None, "convert")
+        # generate
+        for kind, text, ic in (("silence", "Silence…", "silence"), ("tone", "Tone…", "tone"), ("noise", "Noise…", "noise"),
+                               ("dtmf", "Dial tones…", "keypad"), ("speech", "Speech…", "speech")):
+            act(f"gen_{kind}", text, (lambda k=kind: self.ctl.generate(k)), None, ic)
+        # modes and help
+        for i, (key, text, ic) in enumerate(MODE_INFO, start=1):
+            act(f"mode_{key}", text, (lambda k=key: self.set_mode(k)), f"Ctrl+{i}", ic)
+        act("palette", "Command palette", lambda: self.palette.open_palette(), "Ctrl+K", "search", "Search every command  (Ctrl+K)")
+        act("effects_search", "Find an effect…", self._focus_effects, "Ctrl+E", "wand")
+        act("about", "About Tonewright", lambda: AboutDialog(self).exec(), None, "info")
+        act("shortcuts", "Keyboard shortcuts", self._show_shortcuts, "F1", "keypad")
+        act("data_folder", "Open the settings folder", lambda: self.ctl.open_data_folder())
+
+    # ================================================================ UI construction
+    def _build_ui(self) -> None:
+        st = self.state
+        self.stage = Stage()
+        self.stage.follow = bool(st.settings.get("follow_playhead", True))
+        self.stage.show_db = bool(st.settings.get("show_db_scale", True))
+        self.stage.snap_zero = bool(st.settings.get("snap_zero_crossings", False))
+        self.transport = TransportBar(self.actions)
+        self.library = LibraryPanel(st)
+        self.edit_panel = EditPanel(st.favorites)
+        self.convert_panel = ConvertPanel(st.settings)
+        self.book_panel = AudiobookPanel(st.settings)
+        self.tags_page = TagsPage(st)
+        self.ctl = Controller(self, st, self.stage, self.transport, self.edit_panel, self.library)
+        self.ctl.actions = self.actions
+
+        # ---- header
+        header = QWidget()
+        header.setObjectName("header")
+        header.setStyleSheet(f"#header {{ background: {theme.current().bg1}; border-bottom: 1px solid {theme.current().line}; }}")
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(14, 8, 14, 8)
+        hl.setSpacing(6)
+        logo = QLabel()
+        logo.setPixmap(icons.logo_pixmap(30))
+        hl.addWidget(logo)
+        name = QLabel("Tonewright")
+        name.setStyleSheet("font-size: 12.5pt; font-weight: 700; padding: 0 10px 0 6px;")
+        hl.addWidget(name)
+        self.menu_bar = self.menuBar()
+        self.menu_bar.setNativeMenuBar(False)
+        hl.addWidget(self.menu_bar)
+        hl.addStretch(1)
+        self.mode_group = QButtonGroup(self)
+        self.mode_buttons: dict[str, QToolButton] = {}
+        for key, text, ic in MODE_INFO:
+            b = QToolButton()
+            b.setText(text)
+            icons.bind(b, ic, 18)
+            b.setProperty("role", "tab")
+            b.setCheckable(True)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(f"{text}  (Ctrl+{[m[0] for m in MODE_INFO].index(key) + 1})")
+            b.clicked.connect(lambda _=False, k=key: self.set_mode(k))
+            self.mode_group.addButton(b)
+            self.mode_buttons[key] = b
+            hl.addWidget(b)
+        hl.addStretch(1)
+        self.palette_btn = QPushButton("  Search commands")
+        self.palette_btn.setProperty("variant", "ghost")
+        icons.bind(self.palette_btn, "search", 16)
+        self.palette_btn.setToolTip("Ctrl+K")
+        self.palette_btn.setMinimumWidth(170)
+        self.palette_btn.clicked.connect(lambda: self.palette.open_palette())
+        hl.addWidget(self.palette_btn)
+        self.theme_btn = icon_button("sun", "Switch theme")
+        self.theme_btn.clicked.connect(self.toggle_theme)
+        hl.addWidget(self.theme_btn)
+
+        # ---- edit toolbar
+        self.toolbar = QWidget()
+        self.toolbar.setObjectName("toolbar")
+        self.toolbar.setStyleSheet(f"#toolbar {{ background: {theme.current().bg0}; border-bottom: 1px solid {theme.current().line}; }}")
+        tl = QHBoxLayout(self.toolbar)
+        tl.setContentsMargins(14, 5, 14, 5)
+        tl.setSpacing(2)
+
+        def tool(key: str, with_menu: Optional[Callable[[], QMenu]] = None) -> QToolButton:
+            b = QToolButton()
+            b.setDefaultAction(self.actions[key])
+            b.setIconSize(QSize(18, 18))
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            b.setAutoRaise(True)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            sc = self.actions[key].shortcut().toString()
+            b.setToolTip(self.actions[key].toolTip() + (f"  ({sc})" if sc else ""))
+            return b
+
+        for key in ("new", "open", "save"):
+            tl.addWidget(tool(key))
+        tl.addSpacing(6)
+        tl.addWidget(divider(True))
+        tl.addSpacing(6)
+        for key in ("cut", "copy", "paste", "delete", "trim"):
+            tl.addWidget(tool(key))
+        tl.addSpacing(6)
+        tl.addWidget(divider(True))
+        tl.addSpacing(6)
+        self.undo_btn = tool("undo")
+        self.redo_btn = tool("redo")
+        self.undo_menu, self.redo_menu = QMenu(self), QMenu(self)
+        self.undo_btn.setMenu(self.undo_menu)
+        self.undo_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.redo_btn.setMenu(self.redo_menu)
+        self.redo_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.undo_menu.aboutToShow.connect(self._fill_undo_menu)
+        self.redo_menu.aboutToShow.connect(self._fill_redo_menu)
+        tl.addWidget(self.undo_btn)
+        tl.addWidget(self.redo_btn)
+        tl.addSpacing(6)
+        tl.addWidget(divider(True))
+        tl.addSpacing(6)
+        for key in ("view_waveform", "view_spectral", "view_envelope"):
+            b = tool(key)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            tl.addWidget(b)
+        self.env_apply = make_button("Apply envelope", "primary", "check")
+        self.env_apply.clicked.connect(lambda: self.ctl.apply_envelope())
+        self.env_reset = make_button("Reset", "ghost")
+        self.env_reset.clicked.connect(lambda: self.stage.reset_envelope())
+        tl.addWidget(self.env_apply)
+        tl.addWidget(self.env_reset)
+        tl.addSpacing(6)
+        tl.addWidget(divider(True))
+        tl.addSpacing(8)
+        recent_lab = QLabel("RECENT EFFECTS")
+        recent_lab.setProperty("role", "section")
+        tl.addWidget(recent_lab)
+        tl.addSpacing(6)
+        self.recent_box = QHBoxLayout()
+        self.recent_box.setSpacing(4)
+        tl.addLayout(self.recent_box)
+        tl.addStretch(1)
+        self.rebuild_recent()
+
+        # ---- central layout
+        self.center_stack = QStackedWidget()
+        stage_page = QWidget()
+        sl = QVBoxLayout(stage_page)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(0)
+        stage_wrap = QWidget()
+        swl = QVBoxLayout(stage_wrap)
+        swl.setContentsMargins(12, 10, 12, 4)
+        swl.addWidget(self.stage)
+        sl.addWidget(stage_wrap, 1)
+        sl.addWidget(self.transport)
+        self.center_stack.addWidget(stage_page)
+        self.center_stack.addWidget(self.tags_page)
+
+        self.right_stack = QStackedWidget()
+        self.right_stack.addWidget(self.edit_panel)
+        self.right_stack.addWidget(self.convert_panel)
+        self.right_stack.addWidget(self.book_panel)
+        right_wrap = QWidget()
+        right_wrap.setProperty("panel", True)
+        rl = QVBoxLayout(right_wrap)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.addWidget(self.right_stack)
+        self.right_wrap = right_wrap
+        right_wrap.setMinimumWidth(340)
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(self.library)
+        self.splitter.addWidget(self.center_stack)
+        self.splitter.addWidget(right_wrap)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes([310, 800, 370])
+
+        # ---- bottom bars
+        self.convert_bar = JobBar("Convert now", "Output folder", same_folder_option=True)
+        self.book_bar = JobBar("Create audiobook", "Save as")
+        self.convert_bar.path.setText(self.state.settings.get("output_dir") or str(Path.home() / "Music"))
+        self.convert_bar.same_folder.setChecked(bool(self.state.settings.get("same_folder", False)))
+        self.convert_bar._same_toggled(self.convert_bar.same_folder.isChecked())
+
+        root = QWidget()
+        vl = QVBoxLayout(root)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setSpacing(0)
+        vl.addWidget(header)
+        vl.addWidget(self.toolbar)
+        vl.addWidget(self.splitter, 1)
+        vl.addWidget(self.convert_bar)
+        vl.addWidget(self.book_bar)
+        self.setCentralWidget(root)
+
+        # ---- status bar
+        self.status_msg = QLabel("")
+        self.status_right = QLabel("")
+        self.status_right.setProperty("role", "faint")
+        self.statusBar().addWidget(self.status_msg, 1)
+        self.statusBar().addPermanentWidget(self.status_right)
+        self.statusBar().setSizeGripEnabled(False)
+
+    def _build_menus(self) -> None:
+        mb, a = self.menu_bar, self.actions
+        file = mb.addMenu("File")
+        for key in ("new", "open", "import_video"):
+            file.addAction(a[key])
+        self.recent_menu = file.addMenu("Open recent")
+        self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
+        file.addSeparator()
+        for key in ("save", "save_as", "close_item"):
+            file.addAction(a[key])
+        file.addSeparator()
+        file.addAction(a["prev_item"])
+        file.addAction(a["next_item"])
+        file.addSeparator()
+        file.addAction(a["record"])
+        file.addSeparator()
+        file.addAction(a["quit"])
+
+        edit = mb.addMenu("Edit")
+        for key in ("undo", "redo", None, "cut", "copy", "paste", "paste_new", "delete", None, "trim", "silence_sel",
+                    None, "select_all", "select_none", "goto", None, "add_marker", "prev_marker", "next_marker"):
+            edit.addSeparator() if key is None else edit.addAction(a[key])
+
+        view = mb.addMenu("View")
+        for key in ("view_waveform", "view_spectral", "view_envelope", None, "zoom_in", "zoom_out", "zoom_selection",
+                    "zoom_fit", "zoom_samples", "vzoom_in", "vzoom_out", None, "show_db", "follow", "snap_zero",
+                    "spec_log"):
+            view.addSeparator() if key is None else view.addAction(a[key])
+        view.addSeparator()
+        res = view.addMenu("Spectrogram detail")
+        grp = QActionGroup(self)
+        for n in (1024, 2048, 4096, 8192):
+            act = res.addAction(f"{n} points")
+            act.setCheckable(True)
+            act.setChecked(n == int(self.state.settings.get("spectrogram_fft", 2048)))
+            act.triggered.connect(lambda _=False, v=n: self._set_spec_fft(v))
+            grp.addAction(act)
+        view.addAction(a["theme"])
+
+        effects = mb.addMenu("Effects")
+        for category, items in fx.by_category():
+            sub = effects.addMenu(category)
+            for e in items:
+                act = sub.addAction(e.name)
+                act.setToolTip(e.description)
+                act.triggered.connect(lambda _=False, eid=e.id: self.ctl.open_effect(eid))
+        effects.addSeparator()
+        effects.addAction(a["repeat_effect"])
+        effects.addAction(a["effects_search"])
+
+        gen = mb.addMenu("Generate")
+        for k in ("silence", "tone", "noise", "dtmf", "speech"):
+            gen.addAction(a[f"gen_{k}"])
+
+        tools = mb.addMenu("Tools")
+        for key in ("analyze", "spectrum", "silence_tools", "convert_format"):
+            tools.addAction(a[key])
+
+        mix = mb.addMenu("Mix")
+        for key in ("mix_paste", "mix_file", "insert_file"):
+            mix.addAction(a[key])
+
+        self.fav_menu = mb.addMenu("Favorites")
+        self.fav_menu.aboutToShow.connect(self._fill_fav_menu)
+
+        help_menu = mb.addMenu("Help")
+        for key in ("palette", "shortcuts", "data_folder", "about"):
+            help_menu.addAction(a[key])
+
+    def _wire(self) -> None:
+        st, ctl, stage = self.state, self.ctl, self.stage
+        stage.selectionChanged.connect(ctl.on_selection_changed)
+        stage.cursorChanged.connect(ctl.on_cursor_changed)
+        stage.viewChanged.connect(ctl.on_view_changed)
+        stage.seekRequested.connect(ctl.seek_requested)
+        stage.openRequested.connect(ctl.open_dialog)
+        stage.contextMenuRequested.connect(self._stage_menu)
+        stage.markerClicked.connect(lambda i: self.edit_panel.show_tab("Markers"))
+        stage.envelopeChanged.connect(self.update_actions)
+        self.transport.selectionEdited.connect(ctl.selection_edited)
+        self.transport.volumeChanged.connect(ctl.set_volume)
+        self.transport.gotoRequested.connect(ctl.goto_time)
+        ctl.statusMessage.connect(self._flash)
+        ctl.stateChanged.connect(self.update_actions)
+        ctl.previewStateChanged.connect(self.update_actions)
+        self.library.addRequested.connect(ctl.open_dialog)
+        self.library.removeRequested.connect(ctl.remove_items)
+        self.library.filesDropped.connect(lambda paths: ctl.open_paths(paths))
+        self.library.editRequested.connect(lambda item: (st.set_current(item), self.set_mode("edit")))
+        self.library.showInFolder.connect(ctl.show_in_folder)
+        self.library.selectionChanged.connect(self.tags_page.set_items)
+        self.tags_page.renamed.connect(self.library.refresh)
+        st.currentChanged.connect(self._current_changed)
+        st.itemUpdated.connect(lambda item: self._update_title() if item is st.current else None)
+        st.itemsChanged.connect(self._library_changed)
+        self.edit_panel.effectRequested.connect(ctl.open_effect)
+        self.edit_panel.favoriteRequested.connect(ctl.apply_favorite)
+        self.edit_panel.markers.addRequested.connect(ctl.add_marker)
+        self.edit_panel.markers.jumpRequested.connect(ctl.marker_jump)
+        self.edit_panel.markers.removeRequested.connect(ctl.marker_remove)
+        self.edit_panel.markers.renamed.connect(ctl.marker_rename)
+        self.edit_panel.markers.moved.connect(ctl.marker_move)
+        self.edit_panel.history.jumpRequested.connect(ctl.history_jump)
+        # convert flow
+        self.convert_bar.primaryClicked.connect(self.start_convert)
+        self.convert_bar.browseClicked.connect(self._browse_output)
+        self.convert_bar.stopClicked.connect(lambda: self._convert_job and self._convert_job.cancel.cancel())
+        self.convert_bar.pauseToggled.connect(self._pause_convert)
+        self.convert_panel.changed.connect(self._update_convert_summary)
+        self.convert_bar.same_folder.toggled.connect(lambda on: (self.state.settings.set("same_folder", on), self._update_convert_summary()))
+        self.convert_bar.pathEdited.connect(lambda t: (self.state.settings.set("output_dir", t), self._update_convert_summary()))
+        # audiobook flow
+        self.book_panel.previewRequested.connect(self.preview_chapters)
+        self.book_panel.changed.connect(self._update_book_path)
+        self.book_panel.title.textChanged.connect(self._update_book_path)
+        self.book_bar.primaryClicked.connect(self.create_audiobook)
+        self.book_bar.browseClicked.connect(self._browse_book)
+        self.book_bar.stopClicked.connect(lambda: self._book_job and self._book_job.cancel.cancel())
+        self.book_bar.pauseToggled.connect(self._pause_book)
+        self.book_bar.pathEdited.connect(lambda t: setattr(self, "_book_path_touched", True))
+
+    def _build_palette(self) -> None:
+        self.palette = CommandPalette(self)
+
+        def refresh() -> None:
+            cmds: list[Command] = []
+            groups = {"new": "File", "open": "File", "import_video": "File", "save": "File", "save_as": "File",
+                      "close_item": "File", "prev_item": "File", "next_item": "File", "record": "File", "undo": "Edit", "redo": "Edit", "cut": "Edit",
+                      "copy": "Edit", "paste": "Edit", "paste_new": "Edit", "delete": "Edit", "trim": "Edit",
+                      "silence_sel": "Edit", "select_all": "Edit", "select_none": "Edit", "goto": "Edit",
+                      "add_marker": "Edit", "mix_paste": "Mix", "mix_file": "Mix", "insert_file": "Mix",
+                      "analyze": "Tools", "spectrum": "Tools", "silence_tools": "Tools", "convert_format": "Tools",
+                      "play": "Transport", "stop": "Transport", "loop": "Transport", "go_start": "Transport",
+                      "go_end": "Transport", "zoom_in": "View", "zoom_out": "View", "zoom_selection": "View",
+                      "zoom_fit": "View", "view_waveform": "View", "view_spectral": "View", "view_envelope": "View",
+                      "theme": "View", "mode_convert": "Go to", "mode_edit": "Go to", "mode_tags": "Go to",
+                      "mode_audiobook": "Go to", "about": "Help", "shortcuts": "Help", "repeat_effect": "Effects"}
+            for key, group in groups.items():
+                a = self.actions[key]
+                cmds.append(Command(a.text().replace("&", "").rstrip("…"), group, a.trigger, a.shortcut().toString(),
+                                    key.replace("_", " "), "", a.isEnabled()))
+            for kind in ("silence", "tone", "noise", "dtmf", "speech"):
+                a = self.actions[f"gen_{kind}"]
+                cmds.append(Command(f"Generate {a.text().rstrip('…').lower()}", "Generate", a.trigger, "", "create sound", "", a.isEnabled()))
+            has_doc = self.ctl.doc is not None and self.state.mode != "tags"
+            for e in fx.all_effects():
+                cmds.append(Command(e.name, e.category, (lambda eid=e.id: self.ctl.open_effect(eid)), "",
+                                    f"{e.keywords} {e.description}", "wand", has_doc))
+            for fav in self.state.favorites.items:
+                cmds.append(Command(f"★ {fav['name']}", "Favorite", (lambda n=fav["name"]: self.ctl.apply_favorite(n, False)),
+                                    "", fav["effect"], "star", has_doc))
+            self.palette.set_commands(cmds)
+
+        original = self.palette.open_palette
+        self.palette.open_palette = lambda: (refresh(), original())
+
+    # ================================================================ mode handling
+    def set_mode(self, mode: str, initial: bool = False) -> None:
+        if mode not in self.mode_buttons:
+            return
+        self.state.mode = mode
+        self.state.settings.set("last_mode", mode)
+        for k, b in self.mode_buttons.items():
+            b.setChecked(k == mode)
+        self.center_stack.setCurrentIndex(1 if mode == "tags" else 0)
+        self.right_wrap.setVisible(mode != "tags")
+        if mode in RIGHT_PAGE:
+            self.right_stack.setCurrentIndex(RIGHT_PAGE[mode])
+        self.convert_bar.setVisible(mode == "convert")
+        self.book_bar.setVisible(mode == "audiobook")
+        self.toolbar.setVisible(mode == "edit")
+        self.library.tree.setSelectionMode(self.library.tree.SelectionMode.ExtendedSelection)
+        if mode == "tags":
+            self.tags_page.set_items(self.library.selected_items() or ([self.state.current] if self.state.current else []))
+        elif mode == "audiobook":
+            self._prefill_book()
+            self._update_book_path()
+        elif mode == "convert":
+            self._update_convert_summary()
+        self.ctl.show_current()
+        self.update_actions()
+        self.state.modeChanged.emit(mode)
+
+    def _current_changed(self, item: Optional[LibraryItem]) -> None:
+        self.ctl.show_current()
+        if self.state.mode == "tags":
+            sel = self.library.selected_items()
+            self.tags_page.set_items(sel or ([item] if item else []))
+        self._update_title()
+        if self.state.mode == "audiobook":
+            self._prefill_book()
+
+    def _library_changed(self) -> None:
+        self._update_convert_summary()
+        self._update_book_path()
+        if self.state.mode == "audiobook":
+            self._prefill_book()
+        self.update_actions()
+
+    # ================================================================ updates
+    def update_actions(self) -> None:
+        a = self.actions
+        ctl = self.ctl
+        doc = ctl.doc
+        mode = self.state.mode
+        editing = doc is not None and mode != "tags"
+        sel = self.stage.selection
+        has_sel = bool(sel) and editing
+        env = self.stage.state.mode == "envelope"
+        busy_preview = ctl._preview_active
+        for key in ("save", "save_as", "close_item", "select_all", "select_none", "goto", "add_marker", "zoom_in", "zoom_out",
+                    "zoom_fit", "zoom_samples", "vzoom_in", "vzoom_out", "view_waveform", "view_spectral", "view_envelope",
+                    "analyze", "spectrum", "silence_tools", "convert_format", "mix_file", "insert_file", "record_stub"):
+            if key in a:
+                a[key].setEnabled(editing)
+        a["close_item"].setEnabled(self.state.current is not None)
+        for key in ("prev_item", "next_item"):
+            a[key].setEnabled(len(self.state.items) > 1)
+        a["record"].setEnabled(True)
+        for key in ("cut", "copy", "delete", "trim", "silence_sel", "zoom_selection"):
+            a[key].setEnabled(has_sel)
+        a["paste"].setEnabled(editing and self.state.clipboard is not None)
+        a["paste_new"].setEnabled(self.state.clipboard is not None)
+        a["mix_paste"].setEnabled(editing and self.state.clipboard is not None)
+        a["undo"].setEnabled(editing and doc.can_undo)
+        a["redo"].setEnabled(editing and doc.can_redo)
+        a["repeat_effect"].setEnabled(editing and ctl.last_effect is not None)
+        for key in ("prev_marker", "next_marker"):
+            a[key].setEnabled(editing and bool(doc.markers))
+        for key in ("play", "stop", "go_start", "go_end", "rewind", "forward", "loop"):
+            a[key].setEnabled(editing)
+        a["loop"].blockSignals(True)
+        a["loop"].setChecked(ctl.loop_on)
+        a["loop"].blockSignals(False)
+        mode_view = self.stage.state.mode
+        for key, m in (("view_waveform", "waveform"), ("view_spectral", "spectral"), ("view_envelope", "envelope")):
+            a[key].blockSignals(True)
+            a[key].setChecked(mode_view == m)
+            a[key].blockSignals(False)
+        for key in [k for k in a if k.startswith("gen_")]:
+            a[key].setEnabled(True)
+        t = theme.current()
+        playing = ctl.player.state == "playing" and not busy_preview
+        a["play"].setIcon(icons.icon("pause" if playing else "play", 22, color=t.accent_fg))
+        a["play"].setText("Pause" if playing else "Play")
+        self.env_apply.setVisible(env and editing)
+        self.env_reset.setVisible(env and editing)
+        self.undo_btn.setEnabled(a["undo"].isEnabled())
+        self.redo_btn.setEnabled(a["redo"].isEnabled())
+        self.status_right.setText(self._status_right())
+        self.theme_btn.setToolTip("Switch to the light theme" if t.name == "dark" else "Switch to the dark theme")
+        a["theme"].setText("Switch to light theme" if t.name == "dark" else "Switch to dark theme")
+
+    def _status_right(self) -> str:
+        item = self.state.current
+        if item is None:
+            return f"Tonewright {__version__}"
+        doc = item.doc
+        parts = [item.format_text()]
+        if doc is not None:
+            parts.append(f"{format_size(doc.frames * doc.channels * 4)} in memory")
+            if doc.history_index:
+                parts.append(f"{doc.history_index} edit{'s' if doc.history_index != 1 else ''}")
+        return "  ·  ".join(parts)
+
+    def _update_title(self) -> None:
+        item = self.state.current
+        self.setWindowTitle(f"{item.title}  —  Tonewright" if item else "Tonewright")
+
+    def _flash(self, text: str) -> None:
+        self.status_msg.setText(text)
+        if not hasattr(self, "_flash_timer"):
+            self._flash_timer = QTimer(self)
+            self._flash_timer.setSingleShot(True)
+            self._flash_timer.timeout.connect(lambda: self.status_msg.setText(""))
+        self._flash_timer.start(5000)
+
+    def rebuild_recent(self) -> None:
+        while self.recent_box.count():
+            w = self.recent_box.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        ids = [e for e in self.state.settings.get("recent_effects") if e in {x.id for x in fx.all_effects()}]
+        for fallback in ("fade", "normalize", "tempo", "chorus", "reverse"):
+            if len(ids) < 5 and fallback not in ids:
+                ids.append(fallback)
+        for eid in ids[:5]:
+            e = fx.get(eid)
+            b = QPushButton(e.name)
+            b.setProperty("variant", "ghost")
+            b.setToolTip(e.description)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, i=eid: self.ctl.open_effect(i))
+            self.recent_box.addWidget(b)
+
+    # ================================================================ menus
+    def _fill_undo_menu(self) -> None:
+        self.undo_menu.clear()
+        doc = self.ctl.doc
+        if doc is None:
+            return
+        for n, label in enumerate(doc.undo_labels()[:15], start=1):
+            self.undo_menu.addAction(f"{n}.  {label}", lambda k=n: self.ctl.undo_steps(k))
+
+    def _fill_redo_menu(self) -> None:
+        self.redo_menu.clear()
+        doc = self.ctl.doc
+        if doc is None:
+            return
+        for n, label in enumerate(doc.redo_labels()[:15], start=1):
+            self.redo_menu.addAction(f"{n}.  {label}", lambda k=n: self.ctl.redo_steps(k))
+
+    def _fill_recent_menu(self) -> None:
+        self.recent_menu.clear()
+        files = self.state.settings.recent_files()
+        if not files:
+            self.recent_menu.addAction("No recent files").setEnabled(False)
+            return
+        for f in files:
+            self.recent_menu.addAction(Path(f).name, lambda p=f: self.ctl.open_paths([Path(p)])).setToolTip(f)
+        self.recent_menu.addSeparator()
+        self.recent_menu.addAction("Clear list", self.state.settings.clear_recent_files)
+
+    def _fill_fav_menu(self) -> None:
+        self.fav_menu.clear()
+        favs = self.state.favorites.items
+        if not favs:
+            self.fav_menu.addAction("No favorites yet").setEnabled(False)
+        for fav in favs:
+            self.fav_menu.addAction(icons.icon("star", 16), fav["name"],
+                                    lambda n=fav["name"]: self.ctl.apply_favorite(n, False)).setEnabled(self.ctl.doc is not None)
+        self.fav_menu.addSeparator()
+        self.fav_menu.addAction("Manage favorites…", lambda: (self.set_mode("edit"), self.edit_panel.show_tab("Favorites")))
+
+    def _stage_menu(self, pos: QPoint) -> None:
+        a = self.actions
+        menu = QMenu(self)
+        for key in ("cut", "copy", "paste", "delete", None, "trim", "silence_sel", None, "select_all", "add_marker", None,
+                    "zoom_selection", "zoom_fit"):
+            menu.addSeparator() if key is None else menu.addAction(a[key])
+        menu.exec(pos)
+
+    def _focus_effects(self) -> None:
+        self.set_mode("edit")
+        self.edit_panel.show_tab("Effects")
+        self.edit_panel.effects.focus_search()
+
+    def _show_shortcuts(self) -> None:
+        rows = [(a.text().replace("&", "").rstrip("…"), a.shortcut().toString()) for k, a in self.actions.items()
+                if not a.shortcut().isEmpty() and not k.startswith("mode_")]
+        rows += [("Mode: Convert / Edit / Tags / Audiobook", "Ctrl+1 … Ctrl+4"), ("Zoom", "Mouse wheel"),
+                 ("Scroll", "Shift + wheel, or middle-drag"), ("Vertical zoom", "Ctrl + wheel"),
+                 ("Move the cursor", "← →  (Ctrl = 1 second)"), ("Extend the selection", "Shift + ← →")]
+        t = theme.current()
+        html = "".join(f"<tr><td style='padding:3px 18px 3px 0'>{n}</td><td style='color:{t.accent}; font-family:Cascadia Mono'>{s}</td></tr>"
+                       for n, s in sorted(rows))
+        box = QMessageBox(self)
+        box.setWindowTitle("Keyboard shortcuts")
+        box.setText(f"<table>{html}</table>")
+        box.exec()
+
+    # ================================================================ view toggles
+    def _escape(self) -> None:
+        if self.ctl.player.state != "stopped" or self.ctl._preview_active:
+            self.ctl.stop_playback()
+        else:
+            self.stage.clear_selection()
+
+    def _toggle_db(self, on: bool) -> None:
+        self.stage.show_db = on
+        self.state.settings.set("show_db_scale", on)
+        self.stage.invalidate()
+
+    def _toggle_follow(self, on: bool) -> None:
+        self.stage.follow = on
+        self.state.settings.set("follow_playhead", on)
+
+    def _toggle_snap(self, on: bool) -> None:
+        self.stage.snap_zero = on
+        self.state.settings.set("snap_zero_crossings", on)
+
+    def _toggle_spec_log(self, on: bool) -> None:
+        self.stage.spec_log = on
+        self.stage.invalidate()
+
+    def _set_spec_fft(self, n: int) -> None:
+        self.stage.spec_fft = n
+        self.state.settings.set("spectrogram_fft", n)
+        self.stage.invalidate()
+
+    def toggle_theme(self) -> None:
+        new = "light" if theme.current().name == "dark" else "dark"
+        self.state.settings.set("theme", new)
+        theme.apply_theme(QApplication.instance(), new)
+        t = theme.current()
+        self.findChild(QWidget, "header").setStyleSheet(f"#header {{ background: {t.bg1}; border-bottom: 1px solid {t.line}; }}")
+        self.toolbar.setStyleSheet(f"#toolbar {{ background: {t.bg0}; border-bottom: 1px solid {t.line}; }}")
+        icons.refresh_all()
+        self.edit_panel.effects._fill()
+        self.stage.invalidate()
+        enable_dark_title_bar(self, new == "dark")
+        self.update_actions()
+
+    # ================================================================ convert flow
+    def _out_dir(self) -> Optional[Path]:
+        if self.convert_bar.same_folder.isChecked():
+            return None
+        text = self.convert_bar.path.text().strip()
+        return Path(text) if text else None
+
+    def _browse_output(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Choose the output folder", self.convert_bar.path.text() or str(Path.home()))
+        if folder:
+            self.convert_bar.path.setText(folder)
+            self.state.settings.set("output_dir", folder)
+            self._update_convert_summary()
+
+    def _update_convert_summary(self) -> None:
+        if self.state.mode != "convert" and not self.convert_bar.isVisible():
+            return
+        s = self.convert_panel.picker.settings()
+        items = self.state.items
+        first = items[0] if items else None
+        sr, ch = (first.sr, first.channels) if first else (44100, 2)
+        summary = formats.describe(s, sr, ch)
+        total = sum(i.length for i in items)
+        need = sum(formats.estimate_size(s, i.length, i.sr, i.channels) for i in items)
+        folder = self._out_dir() or (first.path.parent if first and first.path else Path.home())
+        try:
+            free = shutil.disk_usage(folder if folder.exists() else folder.anchor or str(Path.home())).free
+            space = f"Free / required space on {folder.anchor or folder}:  {format_size(free)} / {format_size(need)}"
+            low = free < need * 1.1
+        except OSError:
+            space, low = "", False
+        self.convert_bar.set_status(f"{summary}      {space}", "warn" if low else "dim")
+
+    def start_convert(self) -> None:
+        items = self.state.items
+        if not items:
+            self.ctl.open_dialog()
+            return
+        out_dir = self._out_dir()
+        if out_dir is not None:
+            try:
+                out_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                self.ctl.error("Output folder", f"Cannot use that folder: {exc.strerror or exc}")
+                return
+        opts = self.convert_panel.options(out_dir)
+        citems = [i.to_convert_item() for i in items]
+        if any(c.path is None and c.doc is None for c in citems):
+            self.ctl.error("Convert", "Some files have no audio to convert.")
+            return
+        need = sum(formats.estimate_size(opts.settings, c.length, c.source_sr, c.source_channels) for c in citems)
+        folder = out_dir or (items[0].path.parent if items[0].path else Path.home())
+        try:
+            if shutil.disk_usage(folder).free < need * 1.05:
+                if QMessageBox.question(self, "Low disk space", "There may not be enough free space on the drive for the "
+                                        f"output (about {format_size(need)}). Continue anyway?") != QMessageBox.StandardButton.Yes:
+                    return
+        except OSError:
+            pass
+        for it in items:
+            it.status, it.progress, it.message, it.output = "queued", 0.0, "", None
+            self.state.touched(it)
+
+        def run(job: Job):
+            return convert_all(citems, opts, on_item_progress=job.report_item, on_overall=job.report,
+                               on_result=lambda n, r: job.itemResult.emit(n, r), cancel=job.cancel, pause=job.pause)
+
+        job = Job(run)
+        self._convert_job = job
+        job.progress.connect(lambda f: self.convert_bar.set_progress(f))
+        job.itemProgress.connect(self._convert_item_progress)
+        job.itemResult.connect(self._convert_item_result)
+        job.completed.connect(self._convert_done)
+        self.convert_bar.set_running(True)
+        self.convert_bar.set_progress(0.0)
+        self.convert_bar.set_status("Converting…")
+        job.start()
+
+    def _pause_convert(self, paused: bool) -> None:
+        if self._convert_job:
+            (self._convert_job.pause.pause if paused else self._convert_job.pause.resume)()
+            self.convert_bar.set_status("Paused" if paused else "Converting…")
+
+    def _convert_item_progress(self, n: int, frac: float) -> None:
+        if 0 <= n < len(self.state.items):
+            it = self.state.items[n]
+            it.status, it.progress = "converting", frac
+            self.state.touched(it)
+
+    def _convert_item_result(self, n: int, res) -> None:
+        if 0 <= n < len(self.state.items):
+            it = self.state.items[n]
+            it.status, it.message, it.output = res.status, res.message, res.output
+            it.progress = 1.0 if res.status == "done" else 0.0
+            self.state.touched(it)
+
+    def _convert_done(self, results, error, cancelled) -> None:
+        self.convert_bar.set_running(False)
+        self._convert_job = None
+        if error is not None:
+            self.convert_bar.set_status(f"Failed: {error}", "bad")
+            for it in self.state.items:
+                if it.status in ("queued", "converting"):
+                    it.status = "error"
+                    self.state.touched(it)
+            return
+        if cancelled or results is None:
+            for it in self.state.items:
+                if it.status in ("queued", "converting"):
+                    it.status = "ready"
+                    self.state.touched(it)
+            self.convert_bar.set_status("Cancelled", "warn")
+            self.convert_bar.reset_progress()
+            return
+        stopped = [r for r in results if r.status == "cancelled"]
+        done = [r for r in results if r.status == "done"]
+        failed = [r for r in results if r.status == "error"]
+        if stopped:
+            for it in self.state.items:
+                if it.status in ("queued", "converting", "cancelled"):
+                    it.status, it.progress = "ready", 0.0
+                    self.state.touched(it)
+            self.convert_bar.reset_progress()
+            self.convert_bar.set_status(f"Cancelled. {len(done)} file{'s' if len(done) != 1 else ''} had already been converted.", "warn")
+            return
+        skipped = [r for r in results if r.status == "skipped"]
+        self.convert_bar.set_progress(1.0, "Completed 100 %")
+        msg = f"Converted {len({r.output for r in done})} file{'s' if len({r.output for r in done}) != 1 else ''}"
+        if skipped:
+            msg += f", skipped {len(skipped)}"
+        if failed:
+            msg += f", {len(failed)} failed: {failed[0].message}"
+        self.convert_bar.set_status(msg, "bad" if failed else "good")
+        if done:
+            out = done[-1].output
+            self._flash(f"Saved to {out.parent}")
+            if not failed and QApplication.activeWindow() is self:
+                QTimer.singleShot(150, lambda: self._offer_open_folder(out.parent))
+
+    def _offer_open_folder(self, folder: Path) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("Conversion finished")
+        box.setText("All files were converted.")
+        box.setInformativeText(str(folder))
+        open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            import os
+            os.startfile(str(folder))  # type: ignore[attr-defined]
+
+    # ================================================================ audiobook flow
+    def _parts(self) -> list[Part]:
+        parts = []
+        for it in self.state.items:
+            markers = []
+            if it.doc is not None:
+                markers = [(m.frame / it.doc.sr, m.name) for m in it.doc.markers]
+            parts.append(Part(it.to_convert_item(), it.tags.title or "", markers))
+        return parts
+
+    def _prefill_book(self) -> None:
+        items = self.state.items
+        if not items:
+            return
+        t = items[0].tags
+        self.book_panel.prefill(t.album or t.title or items[0].name, t.artist or t.album_artist, t.year, t.cover)
+
+    def _update_book_path(self) -> None:
+        if self._book_path_touched and self.book_bar.path.text():
+            return
+        items = self.state.items
+        if not items:
+            self.book_bar.path.setText("")
+            return
+        title = self.book_panel.title.text().strip() or items[0].name
+        folder = items[0].path.parent if items[0].path else Path.home() / "Music"
+        self.book_bar.path.setText(str(folder / (tagmod.sanitize_filename(title) + ".m4b")))
+        n = len(items)
+        self.book_bar.set_status(f"{n} file{'s' if n != 1 else ''} in the library will be joined, in this order.")
+
+    def _browse_book(self) -> None:
+        name, _ = QFileDialog.getSaveFileName(self, "Save audiobook", self.book_bar.path.text(), "Audiobook (*.m4b)")
+        if name:
+            self._book_path_touched = True
+            self.book_bar.path.setText(str(Path(name).with_suffix(".m4b")))
+
+    def preview_chapters(self) -> None:
+        if not self.state.items:
+            self.ctl.open_dialog()
+            return
+        parts = self._parts()
+        opts = self.book_panel.options()
+        needs_audio = opts.pause_detection and opts.split in ("count", "time")
+        try:
+            if needs_audio:
+                ok, res = run_task(self, "Looking for pauses", lambda progress, cancel: audiobook.analyze_pauses(
+                    parts, opts, progress=progress, cancel=cancel), message="Listening for silences between phrases…", delay_ms=300)
+                if not ok:
+                    return
+                pauses, durations = res
+            else:
+                pauses, durations = None, [p.item.length for p in parts]
+        except Exception as exc:  # noqa: BLE001
+            self.ctl.error("Chapters", exc)
+            return
+        chapters = audiobook.plan_chapters(durations, parts, opts, pauses)
+        note = f"{len(chapters)} chapters."
+        if needs_audio and pauses is not None:
+            note += f" {len(pauses)} pauses were found; chapters start at the pause nearest to each ideal split."
+        self.book_panel.set_chapters(chapters, note + " Double-click a name or time to change it.")
+
+    def create_audiobook(self) -> None:
+        if not self.state.items:
+            self.ctl.open_dialog()
+            return
+        opts = self.book_panel.options()
+        if not opts.title:
+            opts.title = self.state.items[0].name
+        text = self.book_bar.path.text().strip()
+        if not text:
+            self._browse_book()
+            text = self.book_bar.path.text().strip()
+            if not text:
+                return
+        path = Path(text).with_suffix(".m4b")
+        if path.exists() and QMessageBox.question(self, "Create audiobook", f"{path.name} already exists. Replace it?") != QMessageBox.StandardButton.Yes:
+            return
+        parts = self._parts()
+        chapters = self.book_panel.chapters()
+
+        def run(job: Job):
+            return audiobook.create_audiobook(parts, opts, path, chapters=chapters, progress=job.report,
+                                              cancel=job.cancel, pause=job.pause)
+
+        job = Job(run)
+        self._book_job = job
+        job.progress.connect(lambda f: self.book_bar.set_progress(f))
+        job.completed.connect(self._book_done)
+        self.book_bar.set_running(True)
+        self.book_bar.set_progress(0.0)
+        self.book_bar.set_status("Creating the audiobook…")
+        job.start()
+
+    def _pause_book(self, paused: bool) -> None:
+        if self._book_job:
+            (self._book_job.pause.pause if paused else self._book_job.pause.resume)()
+            self.book_bar.set_status("Paused" if paused else "Creating the audiobook…")
+
+    def _book_done(self, result, error, cancelled) -> None:
+        self.book_bar.set_running(False)
+        self._book_job = None
+        if error is not None:
+            self.book_bar.set_status(f"Failed: {str(error).strip().splitlines()[0] if str(error).strip() else error}", "bad")
+            return
+        if cancelled or result is None:
+            self.book_bar.set_status("Cancelled", "warn")
+            self.book_bar.reset_progress()
+            return
+        path, chapters = result
+        self.book_panel.set_chapters(chapters, f"{len(chapters)} chapters written to the file.")
+        self.book_bar.set_progress(1.0, "Completed 100 %")
+        self.book_bar.set_status(f"Created {path.name} with {len(chapters)} chapters.", "good")
+        self._flash(f"Audiobook saved: {path}")
+
+    # ================================================================ window plumbing
+    def dragEnterEvent(self, ev: QDragEnterEvent) -> None:
+        if ev.mimeData().hasUrls():
+            ev.acceptProposedAction()
+
+    def dropEvent(self, ev: QDropEvent) -> None:
+        paths = [Path(u.toLocalFile()) for u in ev.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            self.ctl.open_paths(paths)
+
+    def _restore_geometry(self) -> None:
+        w = self.state.settings.get("window") or {}
+        try:
+            if w.get("geometry"):
+                self.restoreGeometry(QByteArray(base64.b64decode(w["geometry"])))
+            if w.get("sizes") and len(w["sizes"]) == 3:
+                self.splitter.setSizes([int(s) for s in w["sizes"]])
+        except (ValueError, TypeError):
+            pass
+
+    def showEvent(self, ev) -> None:
+        super().showEvent(ev)
+        enable_dark_title_bar(self, theme.current().name == "dark")
+
+    def closeEvent(self, ev: QCloseEvent) -> None:
+        if (self._convert_job and self._convert_job.isRunning()) or (self._book_job and self._book_job.isRunning()):
+            if QMessageBox.question(self, "Quit", "A conversion is still running. Stop it and quit?") != QMessageBox.StandardButton.Yes:
+                ev.ignore()
+                return
+            for job in (self._convert_job, self._book_job):
+                if job:
+                    job.pause.resume()
+                    job.cancel.cancel()
+                    job.wait(5000)
+        if not self.ctl.confirm_quit():
+            ev.ignore()
+            return
+        self.ctl.stop_playback()
+        self.state.settings.set("window", {"geometry": base64.b64encode(bytes(self.saveGeometry())).decode("ascii"),
+                                           "sizes": self.splitter.sizes()})
+        ev.accept()
