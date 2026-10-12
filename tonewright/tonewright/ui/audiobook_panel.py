@@ -16,6 +16,7 @@ from . import theme
 from .safe_image import read_image, read_pixmap
 from .tags_panel import image_bytes_from_qimage
 from .widgets import TimeEdit, divider, make_button, section_label, shrinkable
+from ..i18n import tr, width_scale
 
 
 def _row(label: str, widget: QWidget, width: int = 104) -> QWidget:
@@ -24,7 +25,7 @@ def _row(label: str, widget: QWidget, width: int = 104) -> QWidget:
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(10)
     lab = QLabel(label)
-    lab.setFixedWidth(width)
+    lab.setFixedWidth(int(width * width_scale()))
     lab.setProperty("role", "dim")
     lay.addWidget(lab)
     lay.addWidget(widget, 1)
@@ -53,7 +54,7 @@ class AudiobookPanel(QScrollArea):
         lay.setSpacing(10)
 
         # ---- book
-        lay.addWidget(section_label("Book"))
+        lay.addWidget(section_label(tr("Book")))
         self.title = QLineEdit()
         self.author = QLineEdit()
         self.narrator = QLineEdit()
@@ -61,16 +62,16 @@ class AudiobookPanel(QScrollArea):
         self.year.setPlaceholderText("e.g. 2026")
         self.genre = QComboBox()
         self.genre.setEditable(True)
-        for g in ("Audiobook", "Fiction", "Non-Fiction", "Biography", "Meditation", "Education", "Spoken Word"):
+        for g in (tr("Audiobook"), tr("Fiction"), tr("Non-Fiction"), tr("Biography"), tr("Meditation"), tr("Education"), tr("Spoken Word")):
             self.genre.addItem(g)
-        self.genre.setCurrentText(str(saved.get("genre", "Audiobook")))
+        self.genre.setCurrentText(str(saved.get("genre", tr("Audiobook"))))
         for key, edit in (("title", self.title), ("author", self.author), ("narrator", self.narrator), ("year", self.year)):
             edit.textEdited.connect(lambda _t, k=key: self._touch(k))
-        lay.addWidget(_row("Title", self.title))
-        lay.addWidget(_row("Author", self.author))
-        lay.addWidget(_row("Narrator", self.narrator))
-        lay.addWidget(_row("Year", self.year))
-        lay.addWidget(_row("Genre", shrinkable(self.genre)))
+        lay.addWidget(_row(tr("Title"), self.title))
+        lay.addWidget(_row(tr("Author"), self.author))
+        lay.addWidget(_row(tr("Narrator"), self.narrator))
+        lay.addWidget(_row(tr("Year"), self.year))
+        lay.addWidget(_row(tr("Genre"), shrinkable(self.genre)))
         cov = QHBoxLayout()
         cov.setSpacing(12)
         self.cover_label = QLabel()
@@ -79,8 +80,8 @@ class AudiobookPanel(QScrollArea):
         cov.addWidget(self.cover_label)
         btns = QVBoxLayout()
         btns.setSpacing(6)
-        self.cover_choose = make_button("Choose cover…", icon="image")
-        self.cover_remove = make_button("Remove cover", "ghost", "trash")
+        self.cover_choose = make_button(tr("Choose cover…"), icon="image")
+        self.cover_remove = make_button(tr("Remove cover"), "ghost", "trash")
         btns.addWidget(self.cover_choose)
         btns.addWidget(self.cover_remove)
         btns.addStretch(1)
@@ -93,11 +94,11 @@ class AudiobookPanel(QScrollArea):
         lay.addWidget(divider())
 
         # ---- chapters
-        lay.addWidget(section_label("Chapters"))
+        lay.addWidget(section_label(tr("Chapters")))
         self.mode_group = QButtonGroup(self)
         self.mode_radios: dict[str, QRadioButton] = {}
         for key, text in SPLIT_MODES:
-            r = QRadioButton(text)
+            r = QRadioButton(tr(text))
             self.mode_group.addButton(r)
             self.mode_radios[key] = r
             lay.addWidget(r)
@@ -105,26 +106,26 @@ class AudiobookPanel(QScrollArea):
         self.count = QSpinBox()
         self.count.setRange(1, 999)
         self.count.setValue(int(saved.get("count", 5)))
-        self.count_row = _row("Chapters", self.count)
+        self.count_row = _row(tr("Chapters"), self.count)
         self.every = TimeEdit(short=False)
         self.every.setValue(float(saved.get("every", 180.0)))
         self.every.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.every_row = _row("Every", self.every)
-        self.pause_detect = QCheckBox("Start chapters at pauses")
+        self.every_row = _row(tr("Every"), self.every)
+        self.pause_detect = QCheckBox(tr("Start chapters at pauses"))
         self.pause_detect.setChecked(bool(saved.get("pause", True)))
-        self.pause_detect.setToolTip("Moves each chapter start to the nearest silence, so chapters begin between phrases.")
-        self.keep_titles = QCheckBox("Name chapters from title tags")
+        self.pause_detect.setToolTip(tr("Moves each chapter start to the nearest silence, so chapters begin between phrases."))
+        self.keep_titles = QCheckBox(tr("Name chapters from title tags"))
         self.keep_titles.setChecked(bool(saved.get("keep_titles", True)))
-        self.keep_titles.setToolTip("Use each file's title tag as its chapter name instead of 'Chapter N'.")
-        self.label = QLineEdit(str(saved.get("label", "Chapter")))
-        self.label_row = _row("Name prefix", self.label)
+        self.keep_titles.setToolTip(tr("Use each file's title tag as its chapter name instead of 'Chapter N'."))
+        self.label = QLineEdit(str(saved.get("label", tr("Chapter"))))
+        self.label_row = _row(tr("Name prefix"), self.label)
         for w in (self.count_row, self.every_row, self.pause_detect, self.keep_titles, self.label_row):
             lay.addWidget(w)
-        self.preview_btn = make_button("Preview chapters", icon="flag")
+        self.preview_btn = make_button(tr("Preview chapters"), icon="flag")
         self.preview_btn.clicked.connect(self.previewRequested)
         lay.addWidget(self.preview_btn)
         self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["CHAPTER", "STARTS AT"])
+        self.table.setHorizontalHeaderLabels([tr("CHAPTER"), tr("STARTS AT")])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -139,28 +140,28 @@ class AudiobookPanel(QScrollArea):
         lay.addWidget(divider())
 
         # ---- sound
-        lay.addWidget(section_label("Sound"))
+        lay.addWidget(section_label(tr("Sound")))
         self.bitrate = QComboBox()
         for k in (32, 48, 64, 96, 128, 160):
-            self.bitrate.addItem(f"{k} kbps", k)
+            self.bitrate.addItem(tr(f"{k} kbps"), k)
         self.bitrate.setCurrentIndex(max(0, self.bitrate.findData(int(saved.get("bitrate", 64)))))
-        self.mono = QCheckBox("Mono (smaller file)")
+        self.mono = QCheckBox(tr("Mono (smaller file)"))
         self.mono.setChecked(bool(saved.get("mono", False)))
-        self.mono.setToolTip("Halves the file size; ideal for speech.")
+        self.mono.setToolTip(tr("Halves the file size; ideal for speech."))
         self.rate = QComboBox()
-        self.rate.addItem("Keep original", 0)
+        self.rate.addItem(tr("Keep original"), 0)
         for r in (22050, 32000, 44100, 48000):
-            self.rate.addItem(f"{r} Hz", r)
+            self.rate.addItem(tr(f"{r} Hz"), r)
         self.rate.setCurrentIndex(max(0, self.rate.findData(int(saved.get("rate", 0)))))
         self.gap = QDoubleSpinBox()
         self.gap.setRange(0.0, 30.0)
         self.gap.setSingleStep(0.5)
-        self.gap.setSuffix(" s")
+        self.gap.setSuffix(tr(" s"))
         self.gap.setValue(float(saved.get("gap", 0.0)))
-        lay.addWidget(_row("Bitrate", shrinkable(self.bitrate)))
+        lay.addWidget(_row(tr("Bitrate"), shrinkable(self.bitrate)))
         lay.addWidget(self.mono)
-        lay.addWidget(_row("Sample rate", shrinkable(self.rate)))
-        lay.addWidget(_row("Pause between files", self.gap, 104))
+        lay.addWidget(_row(tr("Sample rate"), shrinkable(self.rate)))
+        lay.addWidget(_row(tr("Pause between files"), self.gap, 104))
         lay.addStretch(1)
         self.setWidget(body)
 
@@ -189,19 +190,19 @@ class AudiobookPanel(QScrollArea):
                                                  Qt.TransformationMode.SmoothTransformation).copy(0, 0, 96, 96))
         else:
             self.cover_label.setPixmap(QPixmap())
-            self.cover_label.setText("No cover")
+            self.cover_label.setText(tr("No cover"))
             self.cover_label.setStyleSheet(f"background: {t.bg2}; border: 1px dashed {t.line_strong}; border-radius: 10px; color: {t.text_faint};")
         self.cover_remove.setEnabled(bool(data))
 
     def _choose_cover(self) -> None:
-        name, _ = QFileDialog.getOpenFileName(self, "Choose cover art", self.settings.last_dir("image"),
-                                              "Images (*.jpg *.jpeg *.png *.bmp *.gif)")
+        name, _ = QFileDialog.getOpenFileName(self, tr("Choose cover art"), self.settings.last_dir("image"),
+                                              tr("Images (*.jpg *.jpeg *.png *.bmp *.gif)"))
         if not name:
             return
         self.settings.remember_dir("image", name)
         img = read_image(name)
         if img.isNull():
-            QMessageBox.warning(self, "Cover art", "That image could not be read. Use a JPEG, PNG, GIF or BMP picture.")
+            QMessageBox.warning(self, tr("Cover art"), tr("That image could not be read. Use a JPEG, PNG, GIF or BMP picture."))
             return
         self.set_cover(image_bytes_from_qimage(img), user=True)
 
@@ -254,18 +255,18 @@ class AudiobookPanel(QScrollArea):
     def options(self) -> BookOptions:
         return BookOptions(
             title=self.title.text().strip(), author=self.author.text().strip(), narrator=self.narrator.text().strip(),
-            year=self.year.text().strip(), genre=self.genre.currentText().strip() or "Audiobook", cover=self._cover,
+            year=self.year.text().strip(), genre=self.genre.currentText().strip() or tr("Audiobook"), cover=self._cover,
             bitrate=int(self.bitrate.currentData()), mono=self.mono.isChecked(), sample_rate=int(self.rate.currentData()),
             split=self.mode(), chapter_count=self.count.value(), chapter_seconds=max(5.0, self.every.value()),
             pause_detection=self.pause_detect.isChecked(), keep_title_tags=self.keep_titles.isChecked(),
-            gap_seconds=self.gap.value(), chapter_label=self.label.text().strip() or "Chapter")
+            gap_seconds=self.gap.value(), chapter_label=self.label.text().strip() or tr("Chapter"))
 
     # ------------------------------------------------------------ chapter table
     def invalidate_plan(self) -> None:
         if self._plan_valid:
             self._plan_valid = False
             self.table.setEnabled(False)
-            self.table_note.setText("Options changed. Preview the chapters again to refresh this list.")
+            self.table_note.setText(tr("Options changed. Preview the chapters again to refresh this list."))
 
     def set_chapters(self, chapters: list[Chapter], note: str = "") -> None:
         self._loading = True
@@ -277,7 +278,7 @@ class AudiobookPanel(QScrollArea):
             tm.setFont(theme.mono_font(9))
             self.table.setItem(r, 1, tm)
         self._plan_valid = True
-        self.table_note.setText(note or f"{len(chapters)} chapters. Double-click a name or a time to change it.")
+        self.table_note.setText(note or tr(f"{len(chapters)} chapters. Double-click a name or a time to change it."))
         self._loading = False
 
     def chapters(self) -> Optional[list[Chapter]]:
@@ -286,7 +287,7 @@ class AudiobookPanel(QScrollArea):
             return None
         out: list[Chapter] = []
         for r in range(self.table.rowCount()):
-            title = self.table.item(r, 0).text().strip() or f"Chapter {r + 1}"
+            title = self.table.item(r, 0).text().strip() or tr(f"Chapter {r + 1}")
             start = parse_time(self.table.item(r, 1).text())
             out.append(Chapter(start if start is not None else 0.0, title))
         out.sort(key=lambda c: c.start)

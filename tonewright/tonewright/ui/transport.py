@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QSlider
 from ..core.timefmt import format_time
 from . import icons, theme
 from .widgets import LevelMeter, TimeEdit, divider, icon_button, role_label
+from ..i18n import tr
 
 
 class BigTime(QLabel):
@@ -20,7 +21,7 @@ class BigTime(QLabel):
         self.setFont(theme.mono_font(27, QFont.Weight.DemiBold))
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Click to jump to a time")
+        self.setToolTip(tr("Click to jump to a time"))
 
     def mousePressEvent(self, ev: QMouseEvent) -> None:
         self.clicked.emit()
@@ -61,7 +62,7 @@ class TransportBar(QFrame):
         box.setSpacing(0)
         self.time = BigTime()
         self.time.clicked.connect(self.gotoRequested)
-        caption = role_label("POSITION", "section")
+        caption = role_label(tr("POSITION"), "section")
         caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         box.addWidget(self.time)
         box.addWidget(caption)
@@ -70,14 +71,14 @@ class TransportBar(QFrame):
         self.meter = LevelMeter()
         self.meter.setFixedWidth(84)
         row1.addWidget(self.meter)
-        self.mute_btn = icon_button("volume", "Mute", size=18)
+        self.mute_btn = icon_button("volume", tr("Mute"), size=18)
         self.mute_btn.clicked.connect(self._toggle_mute)
         row1.addWidget(self.mute_btn)
         self.volume = QSlider(Qt.Orientation.Horizontal)
         self.volume.setRange(0, 100)
         self.volume.setValue(90)
         self.volume.setFixedWidth(76)
-        self.volume.setToolTip("Playback volume")
+        self.volume.setToolTip(tr("Playback volume"))
         self.volume.valueChanged.connect(lambda v: self.volumeChanged.emit(v / 100.0))
         row1.addWidget(self.volume)
         root.addLayout(row1)
@@ -96,9 +97,9 @@ class TransportBar(QFrame):
         sel = QGridLayout()
         sel.setHorizontalSpacing(6)
         sel.setVerticalSpacing(1)
-        for col, text in enumerate(("START", "END", "LENGTH"), start=1):
+        for col, text in enumerate((tr("START"), tr("END"), tr("LENGTH")), start=1):
             sel.addWidget(role_label(text, "section"), 0, col, alignment=Qt.AlignmentFlag.AlignRight)
-        sel.addWidget(role_label("Selection", "dim"), 1, 0)
+        sel.addWidget(role_label(tr("Selection"), "dim"), 1, 0)
         self.sel_start, self.sel_end, self.sel_len = (TimeEdit() for _ in range(3))
         for i, w in enumerate((self.sel_start, self.sel_end, self.sel_len), start=1):
             w.setFixedWidth(112)
@@ -114,7 +115,7 @@ class TransportBar(QFrame):
         self.info = QLabel("")
         self.info.setProperty("role", "faint")
         row3.addWidget(self.info, 1)
-        view_lab = role_label("VIEW", "section")
+        view_lab = role_label(tr("VIEW"), "section")
         self.view_text = QLabel("00:00:00.000 – 00:00:00.000")
         self.view_text.setFont(theme.mono_font(9))
         self.view_text.setProperty("role", "dim")

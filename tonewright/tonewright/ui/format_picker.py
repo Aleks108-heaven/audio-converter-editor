@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QButtonGroup, QComboBox, QGridLayout, QHBoxLayout
 from ..core import formats
 from ..core.formats import EncodeSettings, FormatSpec
 from .widgets import Chip, role_label, shrinkable
+from ..i18n import tr, width_scale
 
 CHIP_LABELS = {"mp3": "MP3", "m4a": "M4A", "m4b": "M4B", "aac": "AAC", "ogg": "OGG", "opus": "Opus",
                "wma": "WMA", "flac": "FLAC", "wav": "WAV", "aiff": "AIFF", "mp2": "MP2", "amr": "AMR",
@@ -23,7 +24,7 @@ def _row(label: str, widget: QWidget, field_width: int = 110) -> QWidget:
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(10)
     lab = QLabel(label)
-    lab.setFixedWidth(field_width)
+    lab.setFixedWidth(int(field_width * width_scale()))
     lab.setProperty("role", "dim")
     lay.addWidget(lab)
     lay.addWidget(widget, 1)
@@ -49,7 +50,7 @@ class FormatPicker(QWidget):
         self.chips: dict[str, Chip] = {}
         for i, key in enumerate(formats.FORMATS):
             chip = Chip(CHIP_LABELS.get(key, key.upper()))
-            chip.setToolTip(formats.FORMATS[key].name)
+            chip.setToolTip(tr(formats.FORMATS[key].name))
             self.group.addButton(chip)
             self.chips[key] = chip
             chip.clicked.connect(lambda _=False, k=key: self._pick_format(k))
@@ -61,8 +62,8 @@ class FormatPicker(QWidget):
         root.addWidget(self.description)
 
         self.mode_combo = QComboBox()
-        self.mode_combo.addItem("Constant bitrate", "cbr")
-        self.mode_combo.addItem("Variable quality", "vbr")
+        self.mode_combo.addItem(tr("Constant bitrate"), "cbr")
+        self.mode_combo.addItem(tr("Variable quality"), "vbr")
         self.bitrate_combo = QComboBox()
         self.quality_combo = QComboBox()
         self.depth_combo = QComboBox()
@@ -79,13 +80,13 @@ class FormatPicker(QWidget):
         for combo in (self.mode_combo, self.bitrate_combo, self.quality_combo, self.depth_combo, self.rate_combo, self.ch_combo):
             shrinkable(combo)
         self.rows = {
-            "mode": _row("Bitrate mode", self.mode_combo),
-            "bitrate": _row("Bitrate", self.bitrate_combo),
-            "quality": _row("Quality", self.quality_combo),
-            "depth": _row("Bit depth", self.depth_combo),
-            "comp": _row("Compression", comp_box),
-            "rate": _row("Sample rate", self.rate_combo),
-            "channels": _row("Channels", self.ch_combo),
+            "mode": _row(tr("Bitrate mode"), self.mode_combo),
+            "bitrate": _row(tr("Bitrate"), self.bitrate_combo),
+            "quality": _row(tr("Quality"), self.quality_combo),
+            "depth": _row(tr("Bit depth"), self.depth_combo),
+            "comp": _row(tr("Compression"), comp_box),
+            "rate": _row(tr("Sample rate"), self.rate_combo),
+            "channels": _row(tr("Channels"), self.ch_combo),
         }
         for w in self.rows.values():
             root.addWidget(w)
@@ -144,7 +145,7 @@ class FormatPicker(QWidget):
         s = self._s
         spec: FormatSpec = s.spec
         self.chips[s.format].setChecked(True)
-        self.description.setText(spec.description)
+        self.description.setText(tr(spec.description))
         self.mode_combo.blockSignals(True)
         self.mode_combo.setCurrentIndex(1 if (s.mode == "vbr" and spec.vbr_choices) else 0)
         self.mode_combo.blockSignals(False)
@@ -156,25 +157,25 @@ class FormatPicker(QWidget):
         self.rows["depth"].setVisible(bool(spec.bit_depths))
         self.rows["comp"].setVisible(spec.compression)
         if lossy:
-            self._fill(self.bitrate_combo, [(f"{b:g} kbps", b) for b in spec.bitrates],
+            self._fill(self.bitrate_combo, [(tr(f"{b:g} kbps"), b) for b in spec.bitrates],
                        s.bitrate if s.bitrate in spec.bitrates else spec.default_bitrate)
             if spec.vbr_choices:
-                self._fill(self.quality_combo, [(c[1], c[0]) for c in spec.vbr_choices],
+                self._fill(self.quality_combo, [(tr(c[1]), c[0]) for c in spec.vbr_choices],
                            int(s.quality) if s.quality else spec.default_vbr)
         if spec.bit_depths:
-            self._fill(self.depth_combo, [(f"{d}-bit" + (" float" if d == 32 and s.format == "wav" else ""), d)
+            self._fill(self.depth_combo, [(tr(f"{d}-bit") + (" float" if d == 32 and s.format == "wav" else ""), d)
                                           for d in spec.bit_depths], s.bit_depth or spec.default_depth)
         self.comp_slider.blockSignals(True)
         self.comp_slider.setValue(int(s.compression))
         self.comp_slider.blockSignals(False)
-        self.comp_label.setText(f"Level {s.compression}")
-        keep_rate = f"Keep original ({self._src_sr} Hz)"
+        self.comp_label.setText(tr(f"Level {s.compression}"))
+        keep_rate = tr(f"Keep original ({self._src_sr} Hz)")
         rates = [(keep_rate, 0)] if not spec.fixed_sample_rate else []
-        rates += [(f"{r} Hz", r) for r in spec.sample_rates]
+        rates += [(tr(f"{r} Hz"), r) for r in spec.sample_rates]
         self._fill(self.rate_combo, rates, s.sample_rate if not spec.fixed_sample_rate else spec.fixed_sample_rate)
         self.rows["rate"].setEnabled(not spec.fixed_sample_rate)
-        names = {1: "Mono", 2: "Stereo"}
-        chans = [(f"Keep original ({names.get(min(self._src_ch, spec.max_channels), self._src_ch)})", 0)]
+        names = {1: tr("Mono"), 2: tr("Stereo")}
+        chans = [(tr(f"Keep original ({names.get(min(self._src_ch, spec.max_channels), self._src_ch)})"), 0)]
         chans += [(names[c], c) for c in (1, 2) if c <= spec.max_channels]
         if spec.fixed_channels:
             chans = [(names[spec.fixed_channels], spec.fixed_channels)]
@@ -197,7 +198,7 @@ class FormatPicker(QWidget):
         s.compression = self.comp_slider.value()
         s.sample_rate = int(self.rate_combo.currentData() or 0)
         s.channels = int(self.ch_combo.currentData() or 0)
-        self.comp_label.setText(f"Level {s.compression}")
+        self.comp_label.setText(tr(f"Level {s.compression}"))
         vbr = s.mode == "vbr" and bool(spec.vbr_choices)
         self.rows["bitrate"].setVisible(not spec.lossless and not vbr)
         self.rows["quality"].setVisible(not spec.lossless and vbr)

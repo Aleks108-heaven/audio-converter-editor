@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QDialog, QFrame, QGraphicsDropShadowEffect, QHBox
 from ..core.common import Cancelled, CancelToken
 from . import theme
 from .widgets import make_button, role_label
+from ..i18n import tr
 
 
 class Worker(QThread):
@@ -71,9 +72,9 @@ class ProgressCard(QDialog):
         lay = QVBoxLayout(card)
         lay.setContentsMargins(22, 18, 22, 18)
         lay.setSpacing(10)
-        self.title = QLabel(title)
+        self.title = QLabel(tr(title))
         self.title.setProperty("role", "h2")
-        self.message = QLabel(message)
+        self.message = QLabel(tr(message))
         self.message.setProperty("role", "dim")
         self.message.setWordWrap(True)
         self.bar = QProgressBar()
@@ -81,7 +82,7 @@ class ProgressCard(QDialog):
         self.percent = QLabel("")
         self.percent.setProperty("role", "dim")
         self.percent.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.cancel_btn = make_button("Cancel")
+        self.cancel_btn = make_button(tr("Cancel"))
         self.cancel_btn.clicked.connect(self._cancel)
         self.cancel_btn.setVisible(cancellable)
         row = QHBoxLayout()
@@ -103,12 +104,12 @@ class ProgressCard(QDialog):
         self.bar.setValue(int(max(0.0, min(1.0, frac)) * 1000))
         self.percent.setText(f"{int(frac * 100)} %")
         if message:
-            self.message.setText(message)
+            self.message.setText(tr(message))
 
     def _cancel(self) -> None:
         if self._cancellable:
             self.cancel_btn.setEnabled(False)
-            self.cancel_btn.setText("Cancelling…")
+            self.cancel_btn.setText(tr("Cancelling…"))
             self.cancelRequested.emit()
 
     def reject(self) -> None:

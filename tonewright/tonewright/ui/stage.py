@@ -15,6 +15,7 @@ from ..core import analysis
 from ..core.document import Document
 from ..core.timefmt import format_time
 from . import icons, theme
+from ..i18n import tr
 
 MODES = ("waveform", "spectral", "envelope")
 MIN_FPP = 1.0 / 64.0
@@ -378,15 +379,15 @@ class Stage(QWidget):
         p.drawPixmap(int(cx - 32), int(cy - 96), logo)
         p.setPen(theme.qcolor(t.text))
         p.setFont(theme.ui_font(15, QFont.Weight.DemiBold))
-        p.drawText(QRectF(r.left(), cy - 14, r.width(), 30), Qt.AlignmentFlag.AlignCenter, "Drop audio here")
+        p.drawText(QRectF(r.left(), cy - 14, r.width(), 30), Qt.AlignmentFlag.AlignCenter, tr("Drop audio here"))
         p.setPen(theme.qcolor(t.text_dim))
         p.setFont(theme.ui_font(10.5))
         p.drawText(QRectF(r.left(), cy + 18, r.width(), 24), Qt.AlignmentFlag.AlignCenter,
-                   "or click to open a file  ·  Ctrl+O")
+                   tr("or click to open a file  ·  Ctrl+O"))
         p.setPen(theme.qcolor(t.text_faint))
         p.setFont(theme.ui_font(9.5))
         p.drawText(QRectF(r.left(), cy + 48, r.width(), 22), Qt.AlignmentFlag.AlignCenter,
-                   "MP3 · WAV · FLAC · M4A · OGG · Opus · WMA · AAC · AMR · video files too")
+                   tr("MP3 · WAV · FLAC · M4A · OGG · Opus · WMA · AAC · AMR · video files too"))
 
     # ---- overview strip
     def _paint_overview(self, p: QPainter, t) -> None:

@@ -31,8 +31,13 @@ from .stage import Stage
 from .state import AppState, LibraryItem, decode_item, probe_path
 from .tasks import run_task
 from .transport import TransportBar
+from ..i18n import tr
 
-OPEN_FILTER = ("Audio and video files (" + " ".join(f"*{e}" for e in sorted(AUDIO_EXTS)) + ");;All files (*.*)")
+def open_filter() -> str:
+    return (tr("Audio and video files") + " (" + " ".join(f"*{e}" for e in sorted(AUDIO_EXTS)) + ");;"
+            + tr("All files") + " (*.*)")
+
+
 EXT_TO_FORMAT = {".mp3": "mp3", ".m4a": "m4a", ".m4b": "m4b", ".aac": "aac", ".ogg": "ogg", ".oga": "ogg",
                  ".opus": "opus", ".wma": "wma", ".flac": "flac", ".wav": "wav", ".aiff": "aiff", ".aif": "aiff",
                  ".mp2": "mp2", ".amr": "amr", ".awb": "amrwb"}
@@ -97,11 +102,11 @@ class Controller(QObject):
         return self.state.player
 
     def info(self, text: str) -> None:
-        self.statusMessage.emit(text)
+        self.statusMessage.emit(tr(text))
 
     def error(self, title: str, exc: BaseException | str) -> None:
-        text = str(exc).strip() or repr(exc)
-        QMessageBox.warning(self.win, title, text if len(text) < 900 else text[:900] + "…")
+        text = tr(str(exc).strip() or repr(exc))
+        QMessageBox.warning(self.win, tr(title), text if len(text) < 900 else text[:900] + "…")
 
     def _range(self) -> tuple[int, int]:
         doc = self.doc
@@ -120,14 +125,15 @@ class Controller(QObject):
 
     # ================================================================ opening files
     def open_dialog(self) -> None:
-        names, _ = QFileDialog.getOpenFileNames(self.win, "Open audio", self.state.settings.last_dir("open"), OPEN_FILTER)
+        names, _ = QFileDialog.getOpenFileNames(self.win, tr("Open audio"), self.state.settings.last_dir("open"), open_filter())
         if names:
             self.state.settings.remember_dir("open", names[0])
             self.open_paths([Path(n) for n in names])
 
     def import_video_dialog(self) -> None:
-        video = "Video files (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.3gp *.mpg *.mpeg *.ts);;All files (*.*)"
-        names, _ = QFileDialog.getOpenFileNames(self.win, "Import audio from video", self.state.settings.last_dir("open"), video)
+        video = (tr("Video files") + " (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.3gp *.mpg *.mpeg *.ts);;"
+                 + tr("All files") + " (*.*)")
+        names, _ = QFileDialog.getOpenFileNames(self.win, tr("Import audio from video"), self.state.settings.last_dir("open"), video)
         if names:
             self.state.settings.remember_dir("open", names[0])
             self.open_paths([Path(n) for n in names])
@@ -155,7 +161,7 @@ class Controller(QObject):
                         errors.append(f"{path.name}: {str(exc).strip().splitlines()[0] if str(exc).strip() else exc}")
                     progress((n + 1) / len(todo))
 
-            ok, _ = run_task(self.win, "Opening files", job, message=f"Reading {len(todo)} file(s)…", delay_ms=450)
+            ok, _ = run_task(self.win, tr("Opening files"), job, message=tr(f"Reading {len(todo)} file(s)…"), delay_ms=450)
             for path in todo:
                 item = probed.get(path)
                 if item is None:
@@ -166,20 +172,20 @@ class Controller(QObject):
                 added.append(item)
                 self.state.settings.add_recent_file(path)
         if errors:
-            self.error("Could not open some files", "\n".join(errors[:8]))
+            self.error(tr("Could not open some files"), "\n".join(errors[:8]))
         target = (added[0] if added else next((e for e in existing if e is not None), None)) if select else None
         if target is not None:
             self.state.set_current(target, force=True)
         if added:
-            self.info(f"Opened {len(added)} file{'s' if len(added) != 1 else ''}")
+            self.info(tr(f"Opened {len(added)} file{'s' if len(added) != 1 else ''}"))
         return added
 
     def _choose_stream(self, item: LibraryItem) -> bool:
         info = item.info
-        labels = [f"Stream {i + 1}: {s.codec.upper()}, {s.channels} ch, {s.sample_rate} Hz"
+        labels = [tr(f"Stream {i + 1}: {s.codec.upper()}, {s.channels} ch, {s.sample_rate} Hz")
                   + (f"  ({s.language})" if s.language else "") + (f"  {s.title}" if s.title else "")
                   for i, s in enumerate(info.audio)]
-        choice, ok = QInputDialog.getItem(self.win, "Choose the audio track", f"{item.name} has several audio tracks:",
+        choice, ok = QInputDialog.getItem(self.win, tr("Choose the audio track"), tr(f"{item.name} has several audio tracks:"),
                                           labels, 0, False)
         if not ok:
             return False
@@ -218,12 +224,12 @@ class Controller(QObject):
         if item.path is None:
             return item.doc is not None
         try:
-            ok, doc = run_task(self.win, "Opening", lambda progress, cancel: decode_item(item, progress, cancel),
-                               message=f"Opening {item.name}…", delay_ms=250)
+            ok, doc = run_task(self.win, tr("Opening"), lambda progress, cancel: decode_item(item, progress, cancel),
+                               message=tr(f"Opening {item.name}…"), delay_ms=250)
         except Exception as exc:  # noqa: BLE001
             item.status, item.message = "error", str(exc)
             self.state.touched(item)
-            self.error(f"Could not open {item.name}", exc)
+            self.error(tr(f"Could not open {item.name}"), exc)
             return False
         if not ok or doc is None:
             return False
@@ -274,8 +280,8 @@ class Controller(QObject):
         if doc is None or item is None:
             self.transport.set_info("")
             return
-        self.transport.set_info(f"{item.format_text()}  ·  {format_time(doc.duration, ms=False, short=True)}  ·  "
-                                f"{len(doc.markers)} marker{'s' if len(doc.markers) != 1 else ''}")
+        self.transport.set_info(tr(f"{item.format_text()}  ·  {format_time(doc.duration, ms=False, short=True)}  ·  "
+                                f"{len(doc.markers)} marker{'s' if len(doc.markers) != 1 else ''}"))
 
     # ================================================================ selection and cursor
     def on_selection_changed(self) -> None:
@@ -311,7 +317,7 @@ class Controller(QObject):
         if self.doc is None:
             return
         pos = (self.player.position if self.player.state != "stopped" else self.stage.cursor) / self.doc.sr
-        value = dialogs.ask_time(self.win, "Go to time", "Time (hh:mm:ss.mmm):", pos)
+        value = dialogs.ask_time(self.win, tr("Go to time"), tr("Time (hh:mm:ss.mmm):"), pos)
         if value is not None:
             frame = int(round(value * self.doc.sr))
             self.stage.set_cursor(frame)
@@ -332,14 +338,14 @@ class Controller(QObject):
         self.state.clipboard = doc.cut(*sel)
         self.stage.clear_selection()
         self.stage.set_cursor(sel[0])
-        self.info(f"Cut {format_time((sel[1] - sel[0]) / doc.sr, ms=False, short=True)}")
+        self.info(tr(f"Cut {format_time((sel[1] - sel[0]) / doc.sr, ms=False, short=True)}"))
 
     def copy(self) -> None:
         doc, sel = self.doc, self.stage.selection
         if doc is None or not sel:
             return
         self.state.clipboard = doc.copy(*sel)
-        self.info(f"Copied {format_time((sel[1] - sel[0]) / doc.sr, ms=False, short=True)}")
+        self.info(tr(f"Copied {format_time((sel[1] - sel[0]) / doc.sr, ms=False, short=True)}"))
         self._refresh()
 
     def delete(self) -> None:
@@ -372,9 +378,9 @@ class Controller(QObject):
         """The clipboard converted to the document's format (cached by the clip itself)."""
         if clip.sr == doc.sr and clip.channels == doc.channels:
             return clip
-        ok, src = run_task(self.win, "Converting", lambda progress, cancel: ops.convert_format(
+        ok, src = run_task(self.win, tr("Converting"), lambda progress, cancel: ops.convert_format(
             clip, doc.sr, doc.channels, progress=progress, cancel=cancel),
-            message=f"Converting the clipboard to {doc.sr} Hz, {doc.channels} ch…", delay_ms=300)
+            message=tr(f"Converting the clipboard to {doc.sr} Hz, {doc.channels} ch…"), delay_ms=300)
         if not ok:
             return None
         converted = Clip.from_source(src)
@@ -388,31 +394,31 @@ class Controller(QObject):
         try:
             clip = self._matching_clip(clip, doc)
         except Exception as exc:  # noqa: BLE001
-            self.error("Paste", exc)
+            self.error(tr("Paste"), exc)
             return
         if clip is None:
             return
         sel = self.stage.selection
         a, b = sel if sel else (self.stage.cursor, self.stage.cursor)
-        doc.replace(a, b, clip._pieces(), "Paste")
+        doc.replace(a, b, clip._pieces(), tr("Paste"))
         self.stage.set_selection(a, a + clip.frames)
         self.stage.set_cursor(a)
         self.stage.ensure_visible(a)
-        self.info(f"Pasted {format_time(clip.duration, ms=False, short=True)}")
+        self.info(tr(f"Pasted {format_time(clip.duration, ms=False, short=True)}"))
 
     def paste_as_new(self) -> None:
         clip = self.state.clipboard
         if clip is None:
             return
-        doc = Document(clip.sr, clip.channels, clip._pieces(), name=self._unique_name("Pasted audio"))
+        doc = Document(clip.sr, clip.channels, clip._pieces(), name=self._unique_name(tr("Pasted audio")))
         self._add_document(doc)
 
     def mix_paste(self) -> None:
         doc, clip = self.doc, self.state.clipboard
         if doc is None or clip is None:
             return
-        dlg = ParamsDialog("Mix paste", "Lays the copied audio on top of the existing audio instead of pushing it aside.",
-                           dialogs.MIX_PARAMS, self._last_params.get("_mix"), self.win, ok_text="Mix")
+        dlg = ParamsDialog(tr("Mix paste"), tr("Lays the copied audio on top of the existing audio instead of pushing it aside."),
+                           dialogs.MIX_PARAMS, self._last_params.get("_mix"), self.win, ok_text=tr("Mix"))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         vals = dlg.values()
@@ -423,20 +429,20 @@ class Controller(QObject):
         doc = self.doc
         if doc is None:
             return
-        name, _ = QFileDialog.getOpenFileName(self.win, "Mix an audio file", self.state.settings.last_dir("open"), OPEN_FILTER)
+        name, _ = QFileDialog.getOpenFileName(self.win, tr("Mix an audio file"), self.state.settings.last_dir("open"), open_filter())
         if not name:
             return
         self.state.settings.remember_dir("open", name)
         try:
-            ok, src = run_task(self.win, "Opening", lambda progress, cancel: ffmpeg.decode_to_source(
-                name, progress=progress, cancel=cancel), message="Reading the file…", delay_ms=250)
+            ok, src = run_task(self.win, tr("Opening"), lambda progress, cancel: ffmpeg.decode_to_source(
+                name, progress=progress, cancel=cancel), message=tr("Reading the file…"), delay_ms=250)
         except Exception as exc:  # noqa: BLE001
-            self.error("Mix file", exc)
+            self.error(tr("Mix file"), exc)
             return
         if not ok:
             return
-        dlg = ParamsDialog("Mix a file", f"Mixes {Path(name).name} in at the cursor.", dialogs.MIX_PARAMS,
-                           self._last_params.get("_mix"), self.win, ok_text="Mix")
+        dlg = ParamsDialog(tr("Mix a file"), tr(f"Mixes {Path(name).name} in at the cursor."), dialogs.MIX_PARAMS,
+                           self._last_params.get("_mix"), self.win, ok_text=tr("Mix"))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         vals = dlg.values()
@@ -447,18 +453,18 @@ class Controller(QObject):
         doc = self.doc
         if doc is None:
             return
-        name, _ = QFileDialog.getOpenFileName(self.win, "Insert an audio file", self.state.settings.last_dir("open"), OPEN_FILTER)
+        name, _ = QFileDialog.getOpenFileName(self.win, tr("Insert an audio file"), self.state.settings.last_dir("open"), open_filter())
         if not name:
             return
         self.state.settings.remember_dir("open", name)
         try:
-            ok, src = run_task(self.win, "Opening", lambda progress, cancel: ffmpeg.decode_to_source(
-                name, progress=progress, cancel=cancel), message="Reading the file…", delay_ms=250)
+            ok, src = run_task(self.win, tr("Opening"), lambda progress, cancel: ffmpeg.decode_to_source(
+                name, progress=progress, cancel=cancel), message=tr("Reading the file…"), delay_ms=250)
         except Exception as exc:  # noqa: BLE001
-            self.error("Insert file", exc)
+            self.error(tr("Insert file"), exc)
             return
         if ok:
-            self._place_source(src, "cursor", "Insert file")
+            self._place_source(src, "cursor", tr("Insert file"))
 
     def _mix_clip(self, clip: Clip, vals: dict) -> None:
         doc = self.doc
@@ -466,7 +472,7 @@ class Controller(QObject):
         try:
             clip = self._matching_clip(clip, doc)
         except Exception as exc:  # noqa: BLE001
-            self.error("Mix", exc)
+            self.error(tr("Mix"), exc)
             return
         if clip is None:
             return
@@ -481,14 +487,14 @@ class Controller(QObject):
             return src
 
         try:
-            ok, src = run_task(self.win, "Mixing", job, message="Mixing the audio…", delay_ms=300)
+            ok, src = run_task(self.win, tr("Mixing"), job, message=tr("Mixing the audio…"), delay_ms=300)
         except Exception as exc:  # noqa: BLE001
-            self.error("Mix", exc)
+            self.error(tr("Mix"), exc)
             return
         if not ok:
             return
         end = min(doc.frames, pos + src.frames)
-        doc.replace_with_source(pos, end, src, "Mix paste")
+        doc.replace_with_source(pos, end, src, tr("Mix paste"))
         self.stage.set_selection(pos, pos + src.frames)
         self.stage.set_cursor(pos)
 
@@ -559,7 +565,7 @@ class Controller(QObject):
         if doc and 0 <= index < len(doc.markers):
             marks = list(doc.markers)
             marks[index] = Marker(max(0, min(frame, doc.frames)), marks[index].name)
-            doc.set_markers(marks, "Move marker")
+            doc.set_markers(marks, tr("Move marker"))
 
     def step_marker(self, direction: int) -> None:
         doc = self.doc
@@ -583,10 +589,10 @@ class Controller(QObject):
         snap = doc.snapshot()
         preview_s = float(self.state.settings.get("preview_seconds", 8))
         if sel:
-            text = (f"Applies to the selection  {format_time(a / sr, ms=False, short=True)} – "
-                    f"{format_time(b / sr, ms=False, short=True)}  ({(b - a) / sr:.1f} s)")
+            text = (tr(f"Applies to the selection  {format_time(a / sr, ms=False, short=True)} – "
+                    f"{format_time(b / sr, ms=False, short=True)}  ({(b - a) / sr:.1f} s)"))
         else:
-            text = f"Applies to the whole file  ({format_time(doc.duration, ms=False, short=True)})"
+            text = tr(f"Applies to the whole file  ({format_time(doc.duration, ms=False, short=True)})")
 
         def render(effect_, vals, bypass, channels, extra, progress, cancel):
             return fx.render_preview(effect_, vals, snap, a, b, seconds=preview_s, bypass=bypass, channels=channels,
@@ -618,7 +624,7 @@ class Controller(QObject):
                 silent = Clip.from_source(Source.silence(int(0.2 * sr), sr, doc.channels))
                 fx.run_effect(effect_, vals, silent, 0, silent.frames)
             except ffmpeg.FFmpegError as exc:
-                return "FFmpeg did not accept that filter chain:\n\n" + (exc.detail or str(exc)).strip()[-500:]
+                return tr("FFmpeg did not accept that filter chain:\n\n") + (exc.detail or str(exc)).strip()[-500:]
             return None
 
         return EffectContext(range_text=text, channels=doc.channels, frames=b - a, sr=sr, render_preview=render,
@@ -629,14 +635,14 @@ class Controller(QObject):
     def open_effect(self, effect_id: str, params: Optional[dict] = None) -> None:
         doc = self.doc
         if doc is None or doc.frames == 0:
-            self.info("Open or create some audio first")
+            self.info(tr("Open or create some audio first"))
             return
         effect = fx.get(effect_id)
         if effect.id == "envelope":
             self.set_view_mode("envelope")
             return
         if effect.min_channels > doc.channels:
-            self.error(effect.name, f"{effect.name} needs a stereo file.")
+            self.error(tr(effect.name), tr(f"{tr(effect.name)} needs a stereo file."))
             return
         self._before_edit()
         ctx = self._effect_context(effect)
@@ -667,19 +673,19 @@ class Controller(QObject):
             return clip
 
         try:
-            ok, clip = run_task(self.win, effect.name, job, message=f"Applying {effect.name}…", delay_ms=250)
+            ok, clip = run_task(self.win, tr(effect.name), job, message=tr(f"Applying {tr(effect.name)}…"), delay_ms=250)
         except Exception as exc:  # noqa: BLE001
-            self.error(effect.name, exc.detail if isinstance(exc, ffmpeg.FFmpegError) and exc.detail else exc)
+            self.error(tr(effect.name), exc.detail if isinstance(exc, ffmpeg.FFmpegError) and exc.detail else exc)
             return
         if not ok:
-            self.info("Cancelled")
+            self.info(tr("Cancelled"))
             return
-        doc.replace(a, b, clip.pieces, effect.name)
+        doc.replace(a, b, clip.pieces, tr(effect.name))
         if had_selection:
             self.stage.set_selection(a, a + clip.frames)
         self.last_effect = (effect.id, params)
         self.state.settings.used_effect(effect.id)
-        self.info(f"Applied {effect.name}")
+        self.info(tr(f"Applied {tr(effect.name)}"))
         self._refresh()
 
     def repeat_effect(self) -> None:
@@ -693,10 +699,10 @@ class Controller(QObject):
         try:
             effect = fx.get(fav["effect"])
         except KeyError:
-            self.error("Favorites", f"The effect “{fav['effect']}” no longer exists.")
+            self.error(tr("Favorites"), tr(f"The effect “{fav['effect']}” no longer exists."))
             return
         if self.doc is None:
-            self.info("Open or create some audio first")
+            self.info(tr("Open or create some audio first"))
             return
         if apply_now:
             self.apply_effect(effect, effect.clean(fav["params"]))
@@ -719,12 +725,12 @@ class Controller(QObject):
                 piece.src.peaks()
             return clip
 
-        ok, clip = run_task(self.win, "Volume envelope", job, message="Applying the envelope…", delay_ms=250)
+        ok, clip = run_task(self.win, tr("Volume envelope"), job, message=tr("Applying the envelope…"), delay_ms=250)
         if not ok:
             return
-        doc.replace(a, b, clip.pieces, "Volume envelope")
+        doc.replace(a, b, clip.pieces, tr("Volume envelope"))
         self.stage.reset_envelope()
-        self.info("Applied the volume envelope")
+        self.info(tr("Applied the volume envelope"))
 
     # ================================================================ views and zoom
     def set_view_mode(self, mode: str) -> None:
@@ -754,18 +760,18 @@ class Controller(QObject):
     def _place_source(self, src: Source, target: str, label: str, new_name: str = "Untitled") -> None:
         doc = self.doc
         if target == "new" or doc is None:
-            self._add_document(Document.from_source(src, name=self._unique_name(new_name)))
+            self._add_document(Document.from_source(src, name=self._unique_name(tr(new_name))))
             return
         self._before_edit()
         if (src.sr, src.channels) != (doc.sr, doc.channels):
-            ok, conv = run_task(self.win, "Converting", lambda progress, cancel: ops.convert_format(
+            ok, conv = run_task(self.win, tr("Converting"), lambda progress, cancel: ops.convert_format(
                 Clip.from_source(src), doc.sr, doc.channels, progress=progress, cancel=cancel), delay_ms=300)
             if not ok:
                 return
             src = conv
         sel = self.stage.selection if target == "selection" else None
         a, b = sel if sel else (self.stage.cursor, self.stage.cursor)
-        doc.replace_with_source(a, b, src, label)
+        doc.replace_with_source(a, b, src, tr(label))
         self.stage.set_selection(a, a + src.frames)
         self.stage.set_cursor(a)
         self.stage.ensure_visible(a)
@@ -781,16 +787,16 @@ class Controller(QObject):
 
     def generate(self, kind: str) -> None:
         sr, ch = self._format_for_generation()
-        titles = {"tone": ("Tone", dialogs.TONE_PARAMS, "Generates a steady tone, a sweep or a test signal."),
-                  "silence": ("Silence", dialogs.SILENCE_PARAMS, "Inserts a stretch of digital silence."),
-                  "noise": ("Noise", dialogs.NOISE_PARAMS, "Generates white, pink, brown, blue or violet noise."),
-                  "dtmf": ("Dial tones", dialogs.DTMF_PARAMS, "Telephone keypad (DTMF) tones.")}
+        titles = {"tone": (tr("Tone"), dialogs.TONE_PARAMS, tr("Generates a steady tone, a sweep or a test signal.")),
+                  "silence": (tr("Silence"), dialogs.SILENCE_PARAMS, tr("Inserts a stretch of digital silence.")),
+                  "noise": (tr("Noise"), dialogs.NOISE_PARAMS, tr("Generates white, pink, brown, blue or violet noise.")),
+                  "dtmf": (tr("Dial tones"), dialogs.DTMF_PARAMS, tr("Telephone keypad (DTMF) tones."))}
         if kind == "speech":
             self._generate_speech(sr, ch)
             return
         title, params, desc = titles[kind]
         dlg = ParamsDialog(title, desc, params, self._last_params.get(f"_gen_{kind}"), self.win,
-                           targets=self._target_list(), ok_text="Generate")
+                           targets=self._target_list(), ok_text=tr("Generate"))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         v = dlg.values()
@@ -808,23 +814,23 @@ class Controller(QObject):
             return generate.generate_dtmf(v["digits"], v["tone_ms"], v["gap_ms"], v["amp_db"], sr, ch)
 
         try:
-            ok, src = run_task(self.win, title, job, message=f"Generating {title.lower()}…", delay_ms=300)
+            ok, src = run_task(self.win, title, job, message=tr(f"Generating {title.lower()}…"), delay_ms=300)
         except Exception as exc:  # noqa: BLE001
             self.error(title, exc)
             return
         if ok:
-            name = {"tone": f"Tone {v.get('freq', 0):g} Hz", "silence": "Silence", "noise": f"{v.get('color', '').title()} noise",
-                    "dtmf": "Dial tones"}[kind]
+            name = {"tone": tr(f"Tone {v.get('freq', 0):g} Hz"), "silence": tr("Silence"), "noise": tr(f"{v.get('color', '').title()} noise"),
+                    "dtmf": tr("Dial tones")}[kind]
             self._place_source(src, dlg.target, title, name)
 
     def _generate_speech(self, sr: int, ch: int) -> None:
         if not generate.speech_available():
-            self.error("Speech", "Speech generation needs the voices that come with Windows.")
+            self.error(tr("Speech"), tr("Speech generation needs the voices that come with Windows."))
             return
         dlg = SpeechDialog(self.win)
         if self.doc is None:
             dlg.target.clear()
-            dlg.target.addItem("Create a new file", "new")
+            dlg.target.addItem(tr("Create a new file"), "new")
         elif not self.stage.selection:
             dlg.target.removeItem(1)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -835,12 +841,12 @@ class Controller(QObject):
             return generate.synthesize_speech(v["text"], v["voice"], v["rate"], v["volume"], cancel=cancel)
 
         try:
-            ok, src = run_task(self.win, "Speech", job, message="Speaking…", delay_ms=200)
+            ok, src = run_task(self.win, tr("Speech"), job, message=tr("Speaking…"), delay_ms=200)
         except Exception as exc:  # noqa: BLE001
-            self.error("Speech", exc)
+            self.error(tr("Speech"), exc)
             return
         if ok:
-            self._place_source(src, v["target"], "Speech", "Speech")
+            self._place_source(src, v["target"], tr("Speech"), tr("Speech"))
 
     def record(self) -> None:
         self.stop_playback()
@@ -849,23 +855,23 @@ class Controller(QObject):
                            default_sr=doc.sr if doc else 44100, device=self.player.device)
         if dlg.exec() != QDialog.DialogCode.Accepted or dlg.result_source is None:
             return
-        self._place_source(dlg.result_source, dlg.where, "Record", "Recording")
-        self.info("Recording added")
+        self._place_source(dlg.result_source, dlg.where, tr("Record"), tr("Recording"))
+        self.info(tr("Recording added"))
 
     def new_document(self) -> None:
         params = [dialogs.Param("sr", "Sample rate", "choice", 44100, choices=dialogs.CONVERT_PARAMS[0].choices),
                   dialogs.Param("channels", "Channels", "choice", 2, choices=dialogs.CONVERT_PARAMS[1].choices),
                   dialogs.Param("seconds", "Starting length", "float", 0.0, 0.0, 3600.0, 0.5, 1, "s",
                                 help="Leave at 0 for an empty file you can record or generate into.")]
-        dlg = ParamsDialog("New file", "Creates an empty audio file to record into, generate sounds in or paste to.",
-                           params, None, self.win, ok_text="Create")
+        dlg = ParamsDialog(tr("New file"), tr("Creates an empty audio file to record into, generate sounds in or paste to."),
+                           params, None, self.win, ok_text=tr("Create"))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         v = dlg.values()
         frames = int(v["seconds"] * v["sr"])
         src = Source.silence(frames, v["sr"], v["channels"]) if frames else Source.from_array(
             np.zeros((0, v["channels"]), np.float32), v["sr"])
-        self._add_document(Document.from_source(src, name=self._unique_name("Untitled")))
+        self._add_document(Document.from_source(src, name=self._unique_name(tr("Untitled"))))
 
     # ================================================================ tools
     def analyze(self) -> None:
@@ -875,13 +881,13 @@ class Controller(QObject):
         a, b = self._range()
         snap = doc.snapshot()
         try:
-            ok, stats = run_task(self.win, "Analyzing", lambda progress, cancel: analysis.measure(
-                snap, a, b, progress=progress, cancel=cancel), message="Measuring levels and loudness…", delay_ms=300)
+            ok, stats = run_task(self.win, tr("Analyzing"), lambda progress, cancel: analysis.measure(
+                snap, a, b, progress=progress, cancel=cancel), message=tr("Measuring levels and loudness…"), delay_ms=300)
         except Exception as exc:  # noqa: BLE001
-            self.error("Analyze", exc)
+            self.error(tr("Analyze"), exc)
             return
         if ok:
-            what = "the selection" if self.stage.selection else "the whole file"
+            what = tr("the selection") if self.stage.selection else tr("the whole file")
             AnalyzeDialog(stats, f"{doc.name} · {what}", self.win).exec()
 
     def spectrum(self) -> None:
@@ -889,16 +895,16 @@ class Controller(QObject):
         if doc is None or doc.frames == 0:
             return
         a, b = self._range()
-        what = "the selection" if self.stage.selection else "the whole file"
-        SpectrumDialog(doc.snapshot(), a, b, f"{doc.name} · average spectrum of {what}", self.win).exec()
+        what = tr("the selection") if self.stage.selection else tr("the whole file")
+        SpectrumDialog(doc.snapshot(), a, b, tr(f"{doc.name} · average spectrum of {what}"), self.win).exec()
 
     def silence_tools(self) -> None:
         doc = self.doc
         if doc is None or doc.frames == 0:
             return
-        dlg = ParamsDialog("Find silence", "Detects quiet stretches. Useful for splitting audiobooks, tightening speech "
-                           "or trimming the start and end of a recording.", dialogs.SILENCE_TOOL_PARAMS,
-                           self._last_params.get("_silence"), self.win, ok_text="Run")
+        dlg = ParamsDialog(tr("Find silence"), tr("Detects quiet stretches. Useful for splitting audiobooks, tightening speech "
+                           "or trimming the start and end of a recording."), dialogs.SILENCE_TOOL_PARAMS,
+                           self._last_params.get("_silence"), self.win, ok_text=tr("Run"))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         v = dlg.values()
@@ -907,30 +913,30 @@ class Controller(QObject):
         snap = doc.snapshot()
         hop = 0.02
         try:
-            ok, levels = run_task(self.win, "Finding silence", lambda progress, cancel: analysis.frame_levels(
+            ok, levels = run_task(self.win, tr("Finding silence"), lambda progress, cancel: analysis.frame_levels(
                 snap, a, b, hop, progress=progress, cancel=cancel), delay_ms=300)
         except Exception as exc:  # noqa: BLE001
-            self.error("Find silence", exc)
+            self.error(tr("Find silence"), exc)
             return
         if not ok:
             return
         runs = analysis.find_silences(levels, hop, v["threshold"], v["min_seconds"])
         sr = doc.sr
         if not runs:
-            self.info("No silences found with those settings")
+            self.info(tr("No silences found with those settings"))
             return
         self._before_edit()
         if v["action"] == "markers":
-            marks = list(doc.markers) + [Marker(a + int(((s + e) / 2) * sr), f"Pause {i}") for i, (s, e) in enumerate(runs, 1)]
-            doc.set_markers(marks, "Mark silences")
+            marks = list(doc.markers) + [Marker(a + int(((s + e) / 2) * sr), tr(f"Pause {i}")) for i, (s, e) in enumerate(runs, 1)]
+            doc.set_markers(marks, tr("Mark silences"))
             self.edit_panel.show_tab("Markers")
-            self.info(f"Added {len(runs)} markers")
+            self.info(tr(f"Added {len(runs)} markers"))
         elif v["action"] == "shorten":
             keep = v["keep"]
             ranges = [(a + int((s + keep / 2) * sr), a + int((e - keep / 2) * sr)) for s, e in runs if e - s > keep + 0.02]
-            doc.delete_ranges(ranges, "Remove silences")
+            doc.delete_ranges(ranges, tr("Remove silences"))
             self.stage.clear_selection()
-            self.info(f"Shortened {len(ranges)} silences")
+            self.info(tr(f"Shortened {len(ranges)} silences"))
         else:
             keep = v["keep"]
             total = (b - a) / sr
@@ -940,19 +946,19 @@ class Controller(QObject):
             if runs[-1][1] >= total - hop * 2 and runs[-1][0] + keep < total:
                 ranges.append((a + int((runs[-1][0] + keep) * sr), b))
             if not ranges:
-                self.info("There is no silence at the start or end")
+                self.info(tr("There is no silence at the start or end"))
                 return
-            doc.delete_ranges(ranges, "Trim silence")
+            doc.delete_ranges(ranges, tr("Trim silence"))
             self.stage.clear_selection()
-            self.info("Trimmed the silence at the ends")
+            self.info(tr("Trimmed the silence at the ends"))
 
     def convert_document_format(self) -> None:
         doc = self.doc
         if doc is None or doc.frames == 0:
             return
         values = {"sr": doc.sr, "channels": doc.channels}
-        dlg = ParamsDialog("Convert file format", "Changes the sample rate or channel layout of this file. "
-                           "Pitch and speed stay the same.", dialogs.CONVERT_PARAMS, values, self.win, ok_text="Convert")
+        dlg = ParamsDialog(tr("Convert file format"), tr("Changes the sample rate or channel layout of this file. "
+                           "Pitch and speed stay the same."), dialogs.CONVERT_PARAMS, values, self.win, ok_text=tr("Convert"))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         v = dlg.values()
@@ -967,12 +973,12 @@ class Controller(QObject):
             return src
 
         try:
-            ok, src = run_task(self.win, "Converting", job, message=f"Converting to {v['sr']} Hz…", delay_ms=250)
+            ok, src = run_task(self.win, tr("Converting"), job, message=tr(f"Converting to {v['sr']} Hz…"), delay_ms=250)
         except Exception as exc:  # noqa: BLE001
-            self.error("Convert", exc)
+            self.error(tr("Convert"), exc)
             return
         if ok:
-            doc.replace_all(src, "Convert format")
+            doc.replace_all(src, tr("Convert format"))
             self.stage.clear_selection()
             self.stage.zoom_fit()
 
@@ -994,9 +1000,9 @@ class Controller(QObject):
             return convert_item(cv, path, opts, progress=progress, cancel=cancel)
 
         try:
-            ok, _ = run_task(self.win, "Saving", job, message=f"Writing {path.name}…", delay_ms=250)
+            ok, _ = run_task(self.win, tr("Saving"), job, message=tr(f"Writing {path.name}…"), delay_ms=250)
         except Exception as exc:  # noqa: BLE001
-            self.error("Save", exc.detail if isinstance(exc, ffmpeg.FFmpegError) and exc.detail else exc)
+            self.error(tr("Save"), exc.detail if isinstance(exc, ffmpeg.FFmpegError) and exc.detail else exc)
             return False
         return bool(ok)
 
@@ -1007,19 +1013,19 @@ class Controller(QObject):
         if item.path is None:
             return self.save_as(item)
         if not item.doc.modified:
-            self.info("No changes to save")
+            self.info(tr("No changes to save"))
             return True
         if item.id not in self._confirmed_overwrite:
             box = QMessageBox(self.win)
-            box.setWindowTitle("Save changes")
+            box.setWindowTitle(tr("Save changes"))
             box.setIcon(QMessageBox.Icon.Question)
-            box.setText(f"Replace the original file {item.path.name} with your edited version?")
+            box.setText(tr(f"Replace the original file {item.path.name} with your edited version?"))
             suffix = item.path.suffix.lower()
             if suffix in (".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wma"):
-                box.setInformativeText("Saving re-encodes lossy audio, which costs a little quality each time. "
-                                       "“Save as…” keeps the original untouched.")
-            replace = box.addButton("Replace file", QMessageBox.ButtonRole.AcceptRole)
-            save_as = box.addButton("Save as…", QMessageBox.ButtonRole.ActionRole)
+                box.setInformativeText(tr("Saving re-encodes lossy audio, which costs a little quality each time. "
+                                       "“Save as…” keeps the original untouched."))
+            replace = box.addButton(tr("Replace file"), QMessageBox.ButtonRole.AcceptRole)
+            save_as = box.addButton(tr("Save as…"), QMessageBox.ButtonRole.ActionRole)
             box.addButton(QMessageBox.StandardButton.Cancel)
             box.exec()
             clicked = box.clickedButton()
@@ -1034,7 +1040,7 @@ class Controller(QObject):
         item.doc.mark_saved()
         item.tags_orig = item.tags.copy()
         self._after_save(item)
-        self.info(f"Saved {item.path.name}")
+        self.info(tr(f"Saved {item.path.name}"))
         return True
 
     def save_as(self, item: Optional[LibraryItem] = None) -> bool:
@@ -1046,7 +1052,7 @@ class Controller(QObject):
         folder = item.path.parent if item.path else Path(self.state.settings.last_dir("export"))
         default = folder / (tagmod.sanitize_filename(item.name) + settings.spec.ext)
         if item.path is not None and default.exists() and default.resolve() == item.path.resolve():
-            default = folder / (tagmod.sanitize_filename(item.name) + " (edited)" + settings.spec.ext)   # never offer the original
+            default = folder / (tagmod.sanitize_filename(item.name) + tr(" (edited)") + settings.spec.ext)   # never offer the original
         sel = self.stage.selection if item is self.item else None
         dlg = ExportDialog(self.win, default, settings, doc.sr, doc.channels, has_selection=bool(sel))
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -1054,9 +1060,9 @@ class Controller(QObject):
         path, settings, only_sel = dlg.result_values()
         if path.exists():
             original = item.path is not None and path.resolve() == item.path.resolve()
-            text = (f"{path.name} is the original file. Replace it with the edited version?" if original
-                    else f"{path.name} already exists. Replace it?")
-            if QMessageBox.question(self.win, "Save as", text) != QMessageBox.StandardButton.Yes:
+            text = (tr(f"{path.name} is the original file. Replace it with the edited version?") if original
+                    else tr(f"{path.name} already exists. Replace it?"))
+            if QMessageBox.question(self.win, tr("Save as"), text) != QMessageBox.StandardButton.Yes:
                 return False
         rng = sel if (only_sel and sel) else None
         if not self._write_document(item, path, settings, rng):
@@ -1072,7 +1078,7 @@ class Controller(QObject):
             item.tags_orig = item.tags.copy()
             self._confirmed_overwrite.add(item.id)
             self._after_save(item)
-        self.info(f"Saved {path.name}")
+        self.info(tr(f"Saved {path.name}"))
         return True
 
     def _after_save(self, item: LibraryItem) -> None:
@@ -1091,11 +1097,11 @@ class Controller(QObject):
             return True
         if item.modified:
             box = QMessageBox(self.win)
-            box.setWindowTitle("Unsaved changes")
+            box.setWindowTitle(tr("Unsaved changes"))
             box.setIcon(QMessageBox.Icon.Warning)
-            box.setText(f"Save changes to {item.name}?")
-            save = box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
-            discard = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+            box.setText(tr(f"Save changes to {item.name}?"))
+            save = box.addButton(tr("Save"), QMessageBox.ButtonRole.AcceptRole)
+            discard = box.addButton(tr("Discard"), QMessageBox.ButtonRole.DestructiveRole)
             box.addButton(QMessageBox.StandardButton.Cancel)
             box.exec()
             clicked = box.clickedButton()
@@ -1159,7 +1165,7 @@ class Controller(QObject):
         try:
             self.player.play(doc.snapshot(), start, end, loop=self.loop_on, loop_range=loop_range)
         except AudioDeviceError as exc:
-            self.error("Playback", exc)
+            self.error(tr("Playback"), exc)
             return
         self.stage.set_playhead(start)
         self._refresh_play_state()

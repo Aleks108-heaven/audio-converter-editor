@@ -15,6 +15,7 @@ from ..core.settings import Favorites
 from ..core.timefmt import format_size, format_time, parse_time
 from . import icons, theme
 from .widgets import icon_button, make_button, role_label
+from ..i18n import tr
 
 ROLE_EFFECT = Qt.ItemDataRole.UserRole
 
@@ -28,14 +29,14 @@ class EffectsTab(QWidget):
         lay.setContentsMargins(10, 10, 10, 6)
         lay.setSpacing(8)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search effects…")
+        self.search.setPlaceholderText(tr("Search effects…"))
         self.search.setClearButtonEnabled(True)
         lay.addWidget(self.search)
         self.list = QListWidget()
         self.list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list.setSpacing(1)
         lay.addWidget(self.list, 1)
-        hint = QLabel("Double-click an effect to open it.\nIt applies to the selection, or to the whole file.")
+        hint = QLabel(tr("Double-click an effect to open it.\nIt applies to the selection, or to the whole file."))
         hint.setProperty("role", "faint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -47,7 +48,7 @@ class EffectsTab(QWidget):
     def _fill(self) -> None:
         self.list.clear()
         for category, effects in fx.by_category():
-            head = QListWidgetItem(category.upper())
+            head = QListWidgetItem(tr(category).upper())
             head.setFlags(Qt.ItemFlag.NoItemFlags)
             f = head.font()
             f.setPointSizeF(8)
@@ -57,9 +58,9 @@ class EffectsTab(QWidget):
             head.setData(ROLE_EFFECT, None)
             self.list.addItem(head)
             for e in effects:
-                item = QListWidgetItem("   " + e.name)
+                item = QListWidgetItem("   " + tr(e.name))
                 item.setData(ROLE_EFFECT, e.id)
-                item.setToolTip(e.description)
+                item.setToolTip(tr(e.description))
                 self.list.addItem(item)
 
     def _filter(self, text: str) -> None:
@@ -75,8 +76,8 @@ class EffectsTab(QWidget):
                 header, visible_in_group = item, False
                 continue
             e = fx.get(ident)
-            match = not q or q in e.name.lower() or q in e.keywords.lower() or q in e.description.lower() \
-                or q in e.category.lower()
+            match = not q or any(q in s.lower() for s in (e.name, e.keywords, e.description, e.category,
+                                                          tr(e.name), tr(e.description), tr(e.category)))
             item.setHidden(not match)
             visible_in_group = visible_in_group or match
         if header is not None:
@@ -104,7 +105,7 @@ class FavoritesTab(QWidget):
         self.list = QListWidget()
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         lay.addWidget(self.list, 1)
-        self.empty = QLabel("No favourites yet.\nIn any effect dialog, press “To Favorites”\nto save your settings here.")
+        self.empty = QLabel(tr("No favourites yet.\nIn any effect dialog, press “To Favorites”\nto save your settings here."))
         self.empty.setProperty("role", "faint")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self.empty)
@@ -121,7 +122,7 @@ class FavoritesTab(QWidget):
                 continue
             item = QListWidgetItem(f"{fav['name']}")
             item.setData(ROLE_EFFECT, fav["name"])
-            item.setToolTip(kind)
+            item.setToolTip(tr(kind))
             item.setIcon(icons.icon("star", 16, color=theme.current().accent))
             self.list.addItem(item)
         self.empty.setVisible(self.list.count() == 0)
@@ -133,15 +134,15 @@ class FavoritesTab(QWidget):
             return
         name = item.data(ROLE_EFFECT)
         menu = QMenu(self)
-        menu.addAction(icons.icon("play"), "Apply now", lambda: self.applyRequested.emit(name, True))
-        menu.addAction(icons.icon("sliders"), "Open with these settings…", lambda: self.applyRequested.emit(name, False))
+        menu.addAction(icons.icon("play"), tr("Apply now"), lambda: self.applyRequested.emit(name, True))
+        menu.addAction(icons.icon("sliders"), tr("Open with these settings…"), lambda: self.applyRequested.emit(name, False))
         menu.addSeparator()
-        menu.addAction(icons.icon("edit"), "Rename…", lambda: self._rename(name))
-        menu.addAction(icons.icon("trash"), "Delete", lambda: (self.favorites.remove(name), self.refresh()))
+        menu.addAction(icons.icon("edit"), tr("Rename…"), lambda: self._rename(name))
+        menu.addAction(icons.icon("trash"), tr("Delete"), lambda: (self.favorites.remove(name), self.refresh()))
         menu.exec(self.list.viewport().mapToGlobal(pos))
 
     def _rename(self, name: str) -> None:
-        new, ok = QInputDialog.getText(self, "Rename favourite", "New name:", text=name)
+        new, ok = QInputDialog.getText(self, tr("Rename favourite"), tr("New name:"), text=name)
         if ok and new.strip():
             self.favorites.rename(name, new.strip())
             self.refresh()
@@ -162,13 +163,13 @@ class MarkersTab(QWidget):
         lay.setContentsMargins(10, 10, 10, 6)
         lay.setSpacing(8)
         row = QHBoxLayout()
-        self.add_btn = make_button("Add at cursor", icon="flag")
-        self.remove_btn = icon_button("trash", "Remove the selected marker")
+        self.add_btn = make_button(tr("Add at cursor"), icon="flag")
+        self.remove_btn = icon_button("trash", tr("Remove the selected marker"))
         row.addWidget(self.add_btn, 1)
         row.addWidget(self.remove_btn)
         lay.addLayout(row)
         self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["NAME", "TIME"])
+        self.table.setHorizontalHeaderLabels([tr("NAME"), tr("TIME")])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -177,7 +178,7 @@ class MarkersTab(QWidget):
         self.table.setShowGrid(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed)
         lay.addWidget(self.table, 1)
-        hint = QLabel("Press M in the editor to drop a marker.\nMarkers can split an audiobook into chapters.")
+        hint = QLabel(tr("Press M in the editor to drop a marker.\nMarkers can split an audiobook into chapters."))
         hint.setProperty("role", "faint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -221,7 +222,7 @@ class MarkersTab(QWidget):
             return
         row = item.row()
         if item.column() == 0:
-            self.renamed.emit(row, item.text().strip() or f"Marker {row + 1}")
+            self.renamed.emit(row, item.text().strip() or tr(f"Marker {row + 1}"))
         else:
             seconds = parse_time(item.text())
             if seconds is not None:
@@ -240,7 +241,7 @@ class HistoryTab(QWidget):
         lay.setContentsMargins(10, 10, 10, 6)
         self.list = QListWidget()
         lay.addWidget(self.list, 1)
-        hint = QLabel("Click a step to go back (or forward) to it.\nEditing from an earlier step discards the later ones.")
+        hint = QLabel(tr("Click a step to go back (or forward) to it.\nEditing from an earlier step discards the later ones."))
         hint.setProperty("role", "faint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -257,7 +258,7 @@ class HistoryTab(QWidget):
             return
         t = theme.current()
         for i, label in enumerate(doc.history_labels()):
-            item = QListWidgetItem(("◂  " if i == doc.history_index else "     ") + (label if i else "Original"))
+            item = QListWidgetItem(("◂  " if i == doc.history_index else "     ") + (tr(label) if i else tr("Original")))
             if i > doc.history_index:
                 item.setForeground(theme.qcolor(t.text_faint))
             elif i == doc.history_index:
@@ -287,19 +288,19 @@ class InfoTab(QWidget):
             self.label.setText("")
             return
         t = theme.current()
-        rows = [("Name", doc.name), ("File", str(doc.path) if doc.path else "Not saved yet"),
-                ("Duration", format_time(doc.duration)),
-                ("Sample rate", f"{doc.sr} Hz"), ("Channels", "Mono" if doc.channels == 1 else "Stereo")]
+        rows = [(tr("Name"), doc.name), (tr("File"), str(doc.path) if doc.path else tr("Not saved yet")),
+                (tr("Duration"), format_time(doc.duration)),
+                (tr("Sample rate"), tr(f"{doc.sr} Hz")), (tr("Channels"), tr("Mono") if doc.channels == 1 else tr("Stereo"))]
         meta = doc.meta
         if meta.get("codec"):
-            rows.append(("Original codec", str(meta["codec"]).upper()))
+            rows.append((tr("Original codec"), str(meta["codec"]).upper()))
         if meta.get("bits"):
-            rows.append(("Bit depth", f"{meta['bits']}-bit"))
+            rows.append((tr("Bit depth"), tr(f"{meta['bits']}-bit")))
         if meta.get("bit_rate"):
-            rows.append(("Original bitrate", f"{int(meta['bit_rate']) // 1000} kbps"))
-        rows.append(("In memory as", f"{format_size(doc.frames * doc.channels * 4)} (32-bit float)"))
-        rows.append(("Markers", str(len(doc.markers))))
-        rows.append(("Edits", str(doc.history_index)))
+            rows.append((tr("Original bitrate"), tr(f"{int(meta['bit_rate']) // 1000} kbps")))
+        rows.append((tr("In memory as"), tr(f"{format_size(doc.frames * doc.channels * 4)} (32-bit float)")))
+        rows.append((tr("Markers"), str(len(doc.markers))))
+        rows.append((tr("Edits"), str(doc.history_index)))
         html = "".join(f"<tr><td style='color:{t.text_faint}; padding:3px 14px 3px 0;'>{k}</td>"
                        f"<td style='color:{t.text};'>{v}</td></tr>" for k, v in rows)
         self.label.setText(f"<table>{html}</table>")
@@ -321,11 +322,11 @@ class EditPanel(QWidget):
         self.markers = MarkersTab()
         self.history = HistoryTab()
         self.info = InfoTab()
-        self.tabs.addTab(self.effects, "Effects")
-        self.tabs.addTab(self.favorites_tab, "Favorites")
-        self.tabs.addTab(self.markers, "Markers")
-        self.tabs.addTab(self.history, "History")
-        self.tabs.addTab(self.info, "Info")
+        self.tabs.addTab(self.effects, tr("Effects"))
+        self.tabs.addTab(self.favorites_tab, tr("Favorites"))
+        self.tabs.addTab(self.markers, tr("Markers"))
+        self.tabs.addTab(self.history, tr("History"))
+        self.tabs.addTab(self.info, tr("Info"))
         self.tabs.tabBar().setExpanding(False)
         self.tabs.tabBar().setUsesScrollButtons(True)
         lay.addWidget(self.tabs)
@@ -349,5 +350,5 @@ class EditPanel(QWidget):
 
     def show_tab(self, name: str) -> None:
         for i in range(self.tabs.count()):
-            if self.tabs.tabText(i).lower() == name.lower():
+            if self.tabs.tabText(i).lower() in (name.lower(), tr(name).lower()):
                 self.tabs.setCurrentIndex(i)

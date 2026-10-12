@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFrame, QGraphicsDrop
                                QListWidget, QListWidgetItem, QStyle, QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from . import icons, theme
+from ..i18n import tr
 
 
 @dataclass
@@ -77,7 +78,7 @@ class CommandPalette(QDialog):
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(6)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Type a command or effect…")
+        self.search.setPlaceholderText(tr("Type a command or effect…"))
         self.search.setStyleSheet("QLineEdit { font-size: 12pt; padding: 10px 12px; border: none; background: transparent; }")
         lay.addWidget(self.search)
         self.list = QListWidget()
@@ -85,7 +86,7 @@ class CommandPalette(QDialog):
         self.list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list.setMinimumHeight(340)
         lay.addWidget(self.list)
-        self.empty = QLabel("No matching command.")
+        self.empty = QLabel(tr("No matching command."))
         self.empty.setProperty("role", "faint")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self.empty)

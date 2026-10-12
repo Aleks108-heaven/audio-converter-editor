@@ -5,6 +5,8 @@ import math
 import re
 from typing import Optional
 
+from ..i18n import tr
+
 
 def format_time(seconds: float, *, ms: bool = True, short: bool = False) -> str:
     """00:22:41.757; with short=True leading zero hours are dropped (22:41.757)."""
@@ -59,9 +61,9 @@ def format_size(num_bytes: float) -> str:
     n = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+            return f"{n:.0f} {tr(unit)}" if unit == "B" else f"{n:.1f} {tr(unit)}"
         n /= 1024
-    return f"{n:.1f} GB"
+    return f"{n:.1f} {tr('GB')}"
 
 
 def db_to_amp(db: float) -> float:

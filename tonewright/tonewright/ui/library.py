@@ -14,6 +14,7 @@ from ..core.timefmt import format_time
 from . import icons, theme
 from .state import AppState, LibraryItem
 from .widgets import icon_button, make_button, role_label
+from ..i18n import tr
 
 ROLE_ID = Qt.ItemDataRole.UserRole
 ROLE_STATUS = Qt.ItemDataRole.UserRole + 1
@@ -72,8 +73,8 @@ class _Delegate(QStyledItemDelegate):
                 p.setBrush(theme.qcolor(t.accent))
                 p.drawRoundedRect(QRectF(bar.left(), bar.top(), max(8.0, bar.width() * progress), 8), 4, 4)
             elif status in ("done", "error", "skipped", "queued"):
-                text, color = {"done": ("Done", t.good), "error": ("Error", t.bad),
-                               "skipped": ("Skipped", t.text_faint), "queued": ("Queued", t.text_dim)}[status]
+                text, color = {"done": (tr("Done"), t.good), "error": (tr("Error"), t.bad),
+                               "skipped": (tr("Skipped"), t.text_faint), "queued": (tr("Queued"), t.text_dim)}[status]
                 p.setFont(theme.ui_font(9, QFont.Weight.DemiBold))
                 p.setPen(theme.qcolor(color))
                 p.drawText(area, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, text)
@@ -135,12 +136,12 @@ class LibraryPanel(QFrame):
         lay.setSpacing(6)
         head = QHBoxLayout()
         head.setSpacing(0)
-        head.addWidget(role_label("LIBRARY", "section"))
+        head.addWidget(role_label(tr("LIBRARY"), "section"))
         head.addStretch(1)
-        self.add_btn = icon_button("plus", "Add audio files…  (Ctrl+O)")
-        self.remove_btn = icon_button("trash", "Remove from library  (Del)")
-        self.up_btn = icon_button("arrow-up", "Move up")
-        self.down_btn = icon_button("arrow-down", "Move down")
+        self.add_btn = icon_button("plus", tr("Add audio files…  (Ctrl+O)"))
+        self.remove_btn = icon_button("trash", tr("Remove from library  (Del)"))
+        self.up_btn = icon_button("arrow-up", tr("Move up"))
+        self.down_btn = icon_button("arrow-down", tr("Move down"))
         for b in (self.up_btn, self.down_btn, self.remove_btn, self.add_btn):
             head.addWidget(b)
         lay.addLayout(head)
@@ -166,10 +167,10 @@ class LibraryPanel(QFrame):
         h.resizeSection(2, 84)
         lay.addWidget(self.tree, 1)
 
-        self.empty = QLabel("Add audio or video files to convert, edit, tag\nor bind into an audiobook.")
+        self.empty = QLabel(tr("Add audio or video files to convert, edit, tag\nor bind into an audiobook."))
         self.empty.setProperty("role", "faint")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_btn = make_button("Add files…", "primary", "plus")
+        self.empty_btn = make_button(tr("Add files…"), "primary", "plus")
         empty_box = QVBoxLayout()
         empty_box.addStretch(1)
         empty_box.addWidget(self.empty)
@@ -246,15 +247,15 @@ class LibraryPanel(QFrame):
         for b in (self.remove_btn, self.up_btn, self.down_btn):
             b.setEnabled(has)
         total = sum(i.length for i in self.state.items)
-        self.summary.setText(f"{len(self.state.items)} file{'s' if len(self.state.items) != 1 else ''}"
-                             f"  ·  {format_time(total, ms=False, short=True)} total" if has else "")
+        self.summary.setText(tr(f"{len(self.state.items)} file{'s' if len(self.state.items) != 1 else ''}"
+                             f"  ·  {format_time(total, ms=False, short=True)} total") if has else "")
 
     def _fill(self, row: QTreeWidgetItem, item: LibraryItem) -> None:
         row.setText(0, item.title)
         row.setText(1, format_time(item.length, ms=False, short=True))
         row.setData(2, ROLE_STATUS, item.status)
         row.setData(2, ROLE_PROGRESS, item.progress)
-        tip = str(item.path) if item.path else "Not saved yet"
+        tip = str(item.path) if item.path else tr("Not saved yet")
         if item.message:
             tip += f"\n{item.message}"
         for c in range(3):
@@ -307,12 +308,12 @@ class LibraryPanel(QFrame):
         if item is None:
             return
         menu = QMenu(self)
-        menu.addAction(icons.icon("waveform"), "Open in editor", lambda: self.editRequested.emit(item))
+        menu.addAction(icons.icon("waveform"), tr("Open in editor"), lambda: self.editRequested.emit(item))
         if item.path:
-            menu.addAction(icons.icon("folder"), "Show in folder", lambda: self.showInFolder.emit(item))
+            menu.addAction(icons.icon("folder"), tr("Show in folder"), lambda: self.showInFolder.emit(item))
         menu.addSeparator()
-        menu.addAction(icons.icon("arrow-up"), "Move up", lambda: self.state.move(item, -1))
-        menu.addAction(icons.icon("arrow-down"), "Move down", lambda: self.state.move(item, 1))
+        menu.addAction(icons.icon("arrow-up"), tr("Move up"), lambda: self.state.move(item, -1))
+        menu.addAction(icons.icon("arrow-down"), tr("Move down"), lambda: self.state.move(item, 1))
         menu.addSeparator()
-        menu.addAction(icons.icon("trash"), "Remove from library", lambda: self.removeRequested.emit(self.selected_items() or [item]))
+        menu.addAction(icons.icon("trash"), tr("Remove from library"), lambda: self.removeRequested.emit(self.selected_items() or [item]))
         menu.exec(self.tree.viewport().mapToGlobal(pos))

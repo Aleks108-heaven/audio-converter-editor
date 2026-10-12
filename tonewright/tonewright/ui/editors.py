@@ -13,6 +13,7 @@ from ..core.effects import dsp
 from ..core.effects.fx_ffmpeg import GRAPHIC_BANDS
 from . import theme
 from .widgets import make_button
+from ..i18n import tr
 
 
 class Editor(QWidget):
@@ -276,15 +277,15 @@ class NoiseProfileEditor(Editor):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
         row = QHBoxLayout()
-        self.button = make_button("Capture selection as noise sample", icon="wand")
+        self.button = make_button(tr("Capture selection as noise sample"), icon="wand")
         self.button.clicked.connect(self._do_capture)
         self.status = QLabel("")
         self.status.setWordWrap(True)
         row.addWidget(self.button)
         row.addWidget(self.status, 1)
         lay.addLayout(row)
-        hint = QLabel("Select a second or two of pure background noise (no speech or music), press Capture, "
-                      "close this dialog, select the whole recording and open Noise Reduction again.")
+        hint = QLabel(tr("Select a second or two of pure background noise (no speech or music), press Capture, "
+                      "close this dialog, select the whole recording and open Noise Reduction again."))
         hint.setProperty("role", "faint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -302,14 +303,14 @@ class NoiseProfileEditor(Editor):
 
     def _refresh(self) -> None:
         if self.sample is not None:
-            self._set_status(f"✓ Using a {len(self.sample) / self._sr:.2f} s noise sample.", "good")
+            self._set_status(tr(f"✓ Using a {len(self.sample) / self._sr:.2f} s noise sample."), "good")
         else:
-            self._set_status("No noise sample captured yet.", "dim")
+            self._set_status(tr("No noise sample captured yet."), "dim")
 
     def _do_capture(self) -> None:
         data = self._capture()
         if data is None or len(data) < self._sr * 0.1:
-            self._set_status("Select at least 0.1 s of noise in the editor first.", "warn")
+            self._set_status(tr("Select at least 0.1 s of noise in the editor first."), "warn")
             return
         self._store["noise"] = data
         self._refresh()

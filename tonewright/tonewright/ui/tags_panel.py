@@ -18,6 +18,7 @@ from .state import AppState, LibraryItem
 from .safe_image import read_image, read_pixmap
 from .tasks import run_task
 from .widgets import divider, make_button, role_label, section_label
+from ..i18n import tr
 
 
 def image_bytes_from_qimage(img: QImage, max_side: int = 1400) -> bytes:
@@ -39,18 +40,18 @@ class CoverBox(QFrame):
         self.setFixedSize(self.SIZE, self.SIZE)
         self.setAcceptDrops(True)
         self._pix: Optional[QPixmap] = None
-        self._text = "No cover art\nDrop an image here"
+        self._text = tr("No cover art\nDrop an image here")
 
     def set_cover(self, data: Optional[bytes], *, mixed: bool = False) -> None:
         self._pix = None
         if mixed:
-            self._text = "Different covers\nChoose one to set them all"
+            self._text = tr("Different covers\nChoose one to set them all")
         elif data:
             pm = read_pixmap(data)
             if not pm.isNull():
                 self._pix = pm
         if self._pix is None and not mixed:
-            self._text = "No cover art\nDrop an image here"
+            self._text = tr("No cover art\nDrop an image here")
         self.update()
 
     def dragEnterEvent(self, ev: QDragEnterEvent) -> None:
@@ -109,17 +110,17 @@ class RenameDialog(QDialog):
 
     def __init__(self, items: list[LibraryItem], parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Rename files from tags")
+        self.setWindowTitle(tr("Rename files from tags"))
         self.setModal(True)
         self.resize(720, 520)
         self.items = items
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 18)
         root.setSpacing(10)
-        head = QLabel("Rename files from tags")
+        head = QLabel(tr("Rename files from tags"))
         head.setProperty("role", "title")
         root.addWidget(head)
-        desc = QLabel("Tokens: {title} {artist} {album} {album_artist} {track} {disc} {year} {genre} {name}")
+        desc = QLabel(tr("Tokens: {title} {artist} {album} {album_artist} {track} {disc} {year} {genre} {name}"))
         desc.setProperty("role", "description")
         root.addWidget(desc)
         self.pattern = QComboBox()
@@ -128,7 +129,7 @@ class RenameDialog(QDialog):
             self.pattern.addItem(p)
         root.addWidget(self.pattern)
         self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["CURRENT NAME", "NEW NAME"])
+        self.table.setHorizontalHeaderLabels([tr("CURRENT NAME"), tr("NEW NAME")])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -139,9 +140,9 @@ class RenameDialog(QDialog):
         root.addWidget(self.note)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = make_button("Cancel")
+        cancel = make_button(tr("Cancel"))
         cancel.clicked.connect(self.reject)
-        self.ok = make_button("Rename", "primary")
+        self.ok = make_button(tr("Rename"), "primary")
         self.ok.clicked.connect(self.accept)
         buttons.addWidget(cancel)
         buttons.addWidget(self.ok)
@@ -172,14 +173,14 @@ class RenameDialog(QDialog):
             clash = seen[str(new).lower()] > 1 or (new.exists() and new != item.path)
             if clash:
                 cell.setForeground(theme.qcolor(theme.current().bad))
-                cell.setToolTip("This name is already taken")
+                cell.setToolTip(tr("This name is already taken"))
                 problems += 1
             elif new == item.path:
                 cell.setForeground(theme.qcolor(theme.current().text_faint))
             self.table.setItem(r, 1, cell)
         self.ok.setEnabled(bool(plan) and not problems)
-        self.note.setText(f"{problems} name{'s' if problems != 1 else ''} would clash. Adjust the pattern." if problems
-                          else f"{len(plan)} file{'s' if len(plan) != 1 else ''} will be renamed.")
+        self.note.setText(tr(f"{problems} name{'s' if problems != 1 else ''} would clash. Adjust the pattern.") if problems
+                          else tr(f"{len(plan)} file{'s' if len(plan) != 1 else ''} will be renamed."))
 
 
 FIELDS = [("title", "Title"), ("artist", "Artist"), ("album", "Album"), ("album_artist", "Album artist"),
@@ -207,7 +208,7 @@ class TagsPage(QWidget):
         root.setContentsMargins(28, 22, 28, 22)
         root.setSpacing(14)
 
-        self.title = QLabel("Tags")
+        self.title = QLabel(tr("Tags"))
         self.title.setProperty("role", "title")
         self.subtitle = QLabel("")
         self.subtitle.setProperty("role", "dim")
@@ -222,10 +223,10 @@ class TagsPage(QWidget):
         left.setSpacing(10)
         self.cover = CoverBox()
         left.addWidget(self.cover)
-        self.choose_btn = make_button("Choose image…", icon="image")
-        self.paste_btn = make_button("Paste image", icon="paste")
-        self.extract_btn = make_button("Save image…", icon="download")
-        self.remove_btn = make_button("Remove", "ghost", "trash")
+        self.choose_btn = make_button(tr("Choose image…"), icon="image")
+        self.paste_btn = make_button(tr("Paste image"), icon="paste")
+        self.extract_btn = make_button(tr("Save image…"), icon="download")
+        self.remove_btn = make_button(tr("Remove"), "ghost", "trash")
         grid = QGridLayout()
         grid.setSpacing(6)
         grid.addWidget(self.choose_btn, 0, 0)
@@ -247,32 +248,32 @@ class TagsPage(QWidget):
             self.edits[key] = edit
             form.addWidget(edit, r, 1, 1, 5)
             r += 1
-        form.addWidget(self._lab("Year"), r, 0)
+        form.addWidget(self._lab(tr("Year")), r, 0)
         self.edits["year"] = self._small("e.g. 2026", 90)
         form.addWidget(self.edits["year"], r, 1)
-        form.addWidget(self._lab("Genre"), r, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        form.addWidget(self._lab(tr("Genre")), r, 2, alignment=Qt.AlignmentFlag.AlignRight)
         self.edits["genre"] = QLineEdit()
         form.addWidget(self.edits["genre"], r, 3, 1, 3)
         r += 1
-        form.addWidget(self._lab("Track"), r, 0)
+        form.addWidget(self._lab(tr("Track")), r, 0)
         self.edits["track"] = self._small("#", 96)
         form.addWidget(self.edits["track"], r, 1)
-        form.addWidget(self._lab("of"), r, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        form.addWidget(self._lab(tr("of")), r, 2, alignment=Qt.AlignmentFlag.AlignRight)
         self.edits["track_total"] = self._small("", 96)
         form.addWidget(self.edits["track_total"], r, 3)
         r += 1
-        form.addWidget(self._lab("Disc"), r, 0)
+        form.addWidget(self._lab(tr("Disc")), r, 0)
         self.edits["disc"] = self._small("#", 96)
         form.addWidget(self.edits["disc"], r, 1)
-        form.addWidget(self._lab("of"), r, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        form.addWidget(self._lab(tr("of")), r, 2, alignment=Qt.AlignmentFlag.AlignRight)
         self.edits["disc_total"] = self._small("", 96)
         form.addWidget(self.edits["disc_total"], r, 3)
         r += 1
-        form.addWidget(self._lab("Composer"), r, 0)
+        form.addWidget(self._lab(tr("Composer")), r, 0)
         self.edits["composer"] = QLineEdit()
         form.addWidget(self.edits["composer"], r, 1, 1, 5)
         r += 1
-        form.addWidget(self._lab("Comment"), r, 0, alignment=Qt.AlignmentFlag.AlignTop)
+        form.addWidget(self._lab(tr("Comment")), r, 0, alignment=Qt.AlignmentFlag.AlignTop)
         self.comment = QPlainTextEdit()
         self.comment.setFixedHeight(84)
         form.addWidget(self.comment, r, 1, 1, 5)
@@ -283,10 +284,10 @@ class TagsPage(QWidget):
         root.addWidget(divider())
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self.number_btn = make_button("Number the tracks", icon="sliders")
-        self.rename_btn = make_button("Rename files from tags…", icon="edit")
-        self.revert_btn = make_button("Revert")
-        self.save_btn = make_button("Save tags to files", "primary", "save")
+        self.number_btn = make_button(tr("Number the tracks"), icon="sliders")
+        self.rename_btn = make_button(tr("Rename files from tags…"), icon="edit")
+        self.revert_btn = make_button(tr("Revert"))
+        self.save_btn = make_button(tr("Save tags to files"), "primary", "save")
         actions.addWidget(self.number_btn)
         actions.addWidget(self.rename_btn)
         actions.addStretch(1)
@@ -316,14 +317,14 @@ class TagsPage(QWidget):
 
     @staticmethod
     def _lab(text: str) -> QLabel:
-        lab = QLabel(text)
+        lab = QLabel(tr(text))
         lab.setProperty("role", "dim")
         return lab
 
     @staticmethod
     def _small(placeholder: str, width: int) -> QLineEdit:
         e = QLineEdit()
-        e.setPlaceholderText(placeholder)
+        e.setPlaceholderText(tr(placeholder))
         e.setFixedWidth(width)
         return e
 
@@ -345,8 +346,8 @@ class TagsPage(QWidget):
         self.number_btn.setEnabled(len(items) > 1)
         self.rename_btn.setEnabled(has and any(i.path for i in items))
         if not has:
-            self.title.setText("Tags")
-            self.subtitle.setText("Select one or more files in the library to edit their tags and cover art.")
+            self.title.setText(tr("Tags"))
+            self.subtitle.setText(tr("Select one or more files in the library to edit their tags and cover art."))
             for e in self.edits.values():
                 e.clear()
                 e.setPlaceholderText("")
@@ -357,22 +358,22 @@ class TagsPage(QWidget):
             return
         if len(items) == 1:
             self.title.setText(items[0].name)
-            self.subtitle.setText(f"{items[0].format_text()}  ·  {items[0].path or 'not saved yet'}")
+            self.subtitle.setText(f"{items[0].format_text()}  ·  {items[0].path or tr('not saved yet')}")
         else:
-            self.title.setText(f"{len(items)} files selected")
-            self.subtitle.setText("Fields that differ show “(multiple values)”. Whatever you type is applied to every selected file; "
-                                  "fields you leave alone are not touched.")
+            self.title.setText(tr(f"{len(items)} files selected"))
+            self.subtitle.setText(tr("Fields that differ show “(multiple values)”. Whatever you type is applied to every selected file; "
+                                  "fields you leave alone are not touched."))
         for key, edit in self.edits.items():
             values = {getattr(i.tags, key) for i in items}
             if len(values) == 1:
                 edit.setText(next(iter(values)))
-                edit.setPlaceholderText({"year": "e.g. 2026", "track": "#", "disc": "#"}.get(key, ""))
+                edit.setPlaceholderText({"year": tr("e.g. 2026"), "track": "#", "disc": "#"}.get(key, ""))
             else:
                 edit.clear()
-                edit.setPlaceholderText("(multiple values)")
+                edit.setPlaceholderText(tr("(multiple values)"))
         comments = {i.tags.comment for i in items}
         self.comment.setPlainText(next(iter(comments)) if len(comments) == 1 else "")
-        self.comment.setPlaceholderText("" if len(comments) == 1 else "(multiple values)")
+        self.comment.setPlaceholderText("" if len(comments) == 1 else tr("(multiple values)"))
         covers = {i.tags.cover for i in items}
         self.cover.set_cover(next(iter(covers)) if len(covers) == 1 else None, mixed=len(covers) > 1)
         self._update_status()
@@ -383,11 +384,11 @@ class TagsPage(QWidget):
         dirty = [i for i in self.items if i.tags_dirty]
         parts = []
         if dirty:
-            parts.append(f"{len(dirty)} file{'s' if len(dirty) != 1 else ''} with unsaved tag changes. "
-                         "They are used when converting even before you save.")
+            parts.append(tr(f"{len(dirty)} file{'s' if len(dirty) != 1 else ''} with unsaved tag changes. "
+                         "They are used when converting even before you save."))
         if unwritable:
-            parts.append(f"Tags cannot be written into {', '.join(sorted({i.path.suffix for i in unwritable}))} files; "
-                         "they are still applied when you convert.")
+            parts.append(tr(f"Tags cannot be written into {', '.join(sorted({i.path.suffix for i in unwritable}))} files; "
+                         "they are still applied when you convert."))
         self.status.setText("  ".join(parts))
 
     def _edited(self, key: str, text: str) -> None:
@@ -416,14 +417,14 @@ class TagsPage(QWidget):
 
     # ------------------------------------------------------------ cover actions
     def _choose_image(self) -> None:
-        name, _ = QFileDialog.getOpenFileName(self, "Choose cover art", self.state.settings.last_dir("image"),
-                                              "Images (*.jpg *.jpeg *.png *.bmp *.gif)")
+        name, _ = QFileDialog.getOpenFileName(self, tr("Choose cover art"), self.state.settings.last_dir("image"),
+                                              tr("Images (*.jpg *.jpeg *.png *.bmp *.gif)"))
         if not name:
             return
         self.state.settings.remember_dir("image", name)
         img = read_image(name)
         if img.isNull():
-            QMessageBox.warning(self, "Cover art", "That image could not be read. Use a JPEG, PNG, GIF or BMP picture.")
+            QMessageBox.warning(self, tr("Cover art"), tr("That image could not be read. Use a JPEG, PNG, GIF or BMP picture."))
             return
         path = Path(name)
         data = path.read_bytes() if path.suffix.lower() in (".jpg", ".jpeg", ".png") and path.stat().st_size < 3_000_000 \
@@ -433,18 +434,18 @@ class TagsPage(QWidget):
     def _paste_image(self) -> None:
         img = QApplication.clipboard().image()
         if img.isNull():
-            QMessageBox.information(self, "Cover art", "There is no image on the clipboard.")
+            QMessageBox.information(self, tr("Cover art"), tr("There is no image on the clipboard."))
             return
         self._set_cover(image_bytes_from_qimage(img))
 
     def _save_image(self) -> None:
         data = next((i.tags.cover for i in self.items if i.tags.cover), None)
         if not data:
-            QMessageBox.information(self, "Cover art", "There is no cover art to save.")
+            QMessageBox.information(self, tr("Cover art"), tr("There is no cover art to save."))
             return
         ext = ".png" if tagmod.sniff_image_mime(data) == "image/png" else ".jpg"
-        name, _ = QFileDialog.getSaveFileName(self, "Save cover art", str(Path(self.state.settings.last_dir("image")) / f"cover{ext}"),
-                                              "Images (*.jpg *.png)")
+        name, _ = QFileDialog.getSaveFileName(self, tr("Save cover art"), str(Path(self.state.settings.last_dir("image")) / f"cover{ext}"),
+                                              tr("Images (*.jpg *.png)"))
         if name:
             Path(name).write_bytes(data)
 
@@ -466,7 +467,7 @@ class TagsPage(QWidget):
     def save(self) -> None:
         targets = [i for i in self.items if i.path and tagmod.can_write(i.path) and i.tags_dirty]
         if not targets:
-            self.status.setText("Nothing to save. Changed tags are kept in the app and used when converting.")
+            self.status.setText(tr("Nothing to save. Changed tags are kept in the app and used when converting."))
             return
         errors: list[str] = []
 
@@ -479,15 +480,15 @@ class TagsPage(QWidget):
                     errors.append(f"{item.name}: {exc}")
                 progress((n + 1) / len(targets))
 
-        ok, _ = run_task(self.window(), "Saving tags", job, message=f"Writing tags to {len(targets)} file(s)…", delay_ms=400)
+        ok, _ = run_task(self.window(), tr("Saving tags"), job, message=tr(f"Writing tags to {len(targets)} file(s)…"), delay_ms=400)
         saved = 0
         for item in targets:
             if not any(item.name in e for e in errors):
                 item.tags_orig = item.tags.copy()
                 saved += 1
                 self.state.touched(item)
-        self.status.setText(f"Saved tags to {saved} file{'s' if saved != 1 else ''}."
-                            + (f"  {len(errors)} failed: " + "; ".join(errors[:3]) if errors else ""))
+        self.status.setText(tr(f"Saved tags to {saved} file{'s' if saved != 1 else ''}.")
+                            + (tr(f"  {len(errors)} failed: ") + "; ".join(errors[:3]) if errors else ""))
         self.status.setProperty("role", "bad" if errors else "good")
         self.status.style().unpolish(self.status)
         self.status.style().polish(self.status)
@@ -511,6 +512,6 @@ class TagsPage(QWidget):
                 item.doc.path, item.doc.name = new, new.stem
             self.state.touched(item)
             done += 1
-        self.status.setText(f"Renamed {done} file{'s' if done != 1 else ''}." + (f"  Failed: {'; '.join(failed)}" if failed else ""))
+        self.status.setText(tr(f"Renamed {done} file{'s' if done != 1 else ''}.") + (tr(f"  Failed: {'; '.join(failed)}") if failed else ""))
         self.renamed.emit()
         self.refresh()

@@ -10,9 +10,10 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from . import APP_NAME, __version__, paths
+from . import APP_NAME, __version__, i18n, paths
 from .core import ffmpeg
 from .core.settings import Settings
+from .i18n import tr
 
 log = logging.getLogger("tonewright")
 
@@ -39,8 +40,8 @@ def _install_crash_handling() -> Path:
             return
         shown["busy"] = True
         try:
-            box = QMessageBox(QMessageBox.Icon.Warning, APP_NAME, "Something went wrong, but Tonewright is still running.")
-            box.setInformativeText(f"{exc_type.__name__}: {exc}\n\nDetails were saved to:\n{logfile}")
+            box = QMessageBox(QMessageBox.Icon.Warning, APP_NAME, tr("Something went wrong, but Tonewright is still running."))
+            box.setInformativeText(tr(f"{exc_type.__name__}: {exc}\n\nDetails were saved to:\n{logfile}"))
             box.exec()
         finally:
             shown["busy"] = False
@@ -65,13 +66,15 @@ def main(argv: list[str] | None = None) -> int:
     from .ui import icons, theme
     app.setWindowIcon(icons.app_icon())
     settings = Settings()
+    log.info("Language: %s", i18n.set_language(settings.get("language")))
+    i18n.install_qt_translations(app)
     theme.apply_theme(app, settings.get("theme"))
     if settings.get("ffmpeg_dir"):
         ffmpeg.set_tool_override("ffmpeg", str(Path(settings.get("ffmpeg_dir")) / "ffmpeg.exe"))
         ffmpeg.set_tool_override("ffprobe", str(Path(settings.get("ffmpeg_dir")) / "ffprobe.exe"))
     if not ffmpeg.available():
-        QMessageBox.critical(None, APP_NAME, "Tonewright needs FFmpeg to read and write audio files, and could not find it.\n\n"
-                             "Install it with:\n    winget install Gyan.FFmpeg\n\nthen start Tonewright again.")
+        QMessageBox.critical(None, APP_NAME, tr("Tonewright needs FFmpeg to read and write audio files, and could not find it.\n\n"
+                             "Install it with:\n    winget install Gyan.FFmpeg\n\nthen start Tonewright again."))
         return 1
     paths.cleanup_stale_sessions()
     from .ui.main_window import MainWindow

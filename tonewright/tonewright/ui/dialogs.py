@@ -25,6 +25,7 @@ from . import icons, theme
 from .effect_dialog import ParamControl
 from .format_picker import FormatPicker
 from .widgets import LevelMeter, divider, make_button, role_label
+from ..i18n import tr
 
 
 # ------------------------------------------------------------------ generic parameter dialog
@@ -62,20 +63,20 @@ class ParamsDialog(QDialog):
         self.target_combo: Optional[QComboBox] = None
         if targets:
             row = QHBoxLayout()
-            lab = QLabel("Put it")
+            lab = QLabel(tr("Put it"))
             lab.setFixedWidth(150)
             self.target_combo = QComboBox()
             for text, key in targets:
-                self.target_combo.addItem(text, key)
+                self.target_combo.addItem(tr(text), key)
             row.addWidget(lab)
             row.addWidget(self.target_combo, 1)
             root.addLayout(row)
         root.addWidget(divider())
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = make_button("Cancel")
+        cancel = make_button(tr("Cancel"))
         cancel.clicked.connect(self.reject)
-        ok = make_button(ok_text, "primary")
+        ok = make_button(tr(ok_text), "primary")
         ok.setDefault(True)
         ok.clicked.connect(self.accept)
         buttons.addWidget(cancel)
@@ -148,27 +149,27 @@ MIX_PARAMS = [
 class SpeechDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Speech")
+        self.setWindowTitle(tr("Speech"))
         self.setModal(True)
         self.setMinimumWidth(560)
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 18)
         root.setSpacing(12)
-        head = QLabel("Speech")
+        head = QLabel(tr("Speech"))
         head.setProperty("role", "title")
         root.addWidget(head)
-        desc = QLabel("Turns text into speech using the voices installed in Windows.")
+        desc = QLabel(tr("Turns text into speech using the voices installed in Windows."))
         desc.setProperty("role", "description")
         root.addWidget(desc)
         self.text = QPlainTextEdit()
-        self.text.setPlaceholderText("Type or paste the text to speak…")
+        self.text.setPlaceholderText(tr("Type or paste the text to speak…"))
         self.text.setMinimumHeight(130)
         root.addWidget(self.text)
         form = QFormLayout()
         form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         self.voice = QComboBox()
-        self.voice.addItem("Default voice", "")
+        self.voice.addItem(tr("Default voice"), "")
         for v in generate.list_voices():
             self.voice.addItem(v, v)
         self.rate = QSlider(Qt.Orientation.Horizontal)
@@ -176,20 +177,20 @@ class SpeechDialog(QDialog):
         self.volume = QSlider(Qt.Orientation.Horizontal)
         self.volume.setRange(0, 100)
         self.volume.setValue(100)
-        form.addRow("Voice", self.voice)
-        form.addRow("Speed", self.rate)
-        form.addRow("Volume", self.volume)
+        form.addRow(tr("Voice"), self.voice)
+        form.addRow(tr("Speed"), self.rate)
+        form.addRow(tr("Volume"), self.volume)
         root.addLayout(form)
         self.target = QComboBox()
-        self.target.addItem("Insert at the cursor", "cursor")
-        self.target.addItem("Replace the selection", "selection")
-        self.target.addItem("Create a new file", "new")
-        form.addRow("Put it", self.target)
+        self.target.addItem(tr("Insert at the cursor"), "cursor")
+        self.target.addItem(tr("Replace the selection"), "selection")
+        self.target.addItem(tr("Create a new file"), "new")
+        form.addRow(tr("Put it"), self.target)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = make_button("Cancel")
+        cancel = make_button(tr("Cancel"))
         cancel.clicked.connect(self.reject)
-        ok = make_button("Generate speech", "primary")
+        ok = make_button(tr("Generate speech"), "primary")
         ok.clicked.connect(self._ok)
         buttons.addWidget(cancel)
         buttons.addWidget(ok)
@@ -197,7 +198,7 @@ class SpeechDialog(QDialog):
 
     def _ok(self) -> None:
         if not self.text.toPlainText().strip():
-            QMessageBox.information(self, "Speech", "Type some text first.")
+            QMessageBox.information(self, tr("Speech"), tr("Type some text first."))
             return
         self.accept()
 
@@ -211,7 +212,7 @@ class RecordDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None, *, can_insert: bool = False,
                  has_selection: bool = False, default_sr: int = 44100, device: Optional[int] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Record")
+        self.setWindowTitle(tr("Record"))
         self.setModal(True)
         self.setMinimumWidth(520)
         self.recorder: Optional[Recorder] = None
@@ -219,7 +220,7 @@ class RecordDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 18)
         root.setSpacing(12)
-        head = QLabel("Record")
+        head = QLabel(tr("Record"))
         head.setProperty("role", "title")
         root.addWidget(head)
 
@@ -230,24 +231,24 @@ class RecordDialog(QDialog):
         for d in self.inputs:
             self.device.addItem(d.name, d.index)
         if not self.inputs:
-            self.device.addItem("No microphone found", None)
+            self.device.addItem(tr("No microphone found"), None)
         self.rate = QComboBox()
         for r in (44100, 48000, 32000, 22050, 16000):
-            self.rate.addItem(f"{r} Hz", r)
+            self.rate.addItem(tr(f"{r} Hz"), r)
         self.rate.setCurrentIndex(max(0, self.rate.findData(default_sr)))
         self.channels = QComboBox()
-        self.channels.addItem("Stereo", 2)
-        self.channels.addItem("Mono", 1)
+        self.channels.addItem(tr("Stereo"), 2)
+        self.channels.addItem(tr("Mono"), 1)
         self.target = QComboBox()
-        self.target.addItem("Create a new file", "new")
+        self.target.addItem(tr("Create a new file"), "new")
         if can_insert:
-            self.target.addItem("Insert at the cursor", "cursor")
+            self.target.addItem(tr("Insert at the cursor"), "cursor")
             if has_selection:
-                self.target.addItem("Replace the selection", "selection")
-        form.addRow("Input", self.device)
-        form.addRow("Sample rate", self.rate)
-        form.addRow("Channels", self.channels)
-        form.addRow("Put the recording", self.target)
+                self.target.addItem(tr("Replace the selection"), "selection")
+        form.addRow(tr("Input"), self.device)
+        form.addRow(tr("Sample rate"), self.rate)
+        form.addRow(tr("Channels"), self.channels)
+        form.addRow(tr("Put the recording"), self.target)
         root.addLayout(form)
         root.addWidget(divider())
 
@@ -258,19 +259,19 @@ class RecordDialog(QDialog):
         self.meter = LevelMeter()
         self.meter.setFixedHeight(22)
         root.addWidget(self.meter)
-        self.status = QLabel("Ready. Press Record to start.")
+        self.status = QLabel(tr("Ready. Press Record to start."))
         self.status.setProperty("role", "dim")
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(self.status)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        self.record_btn = make_button("Record", "danger", "record")
-        self.pause_btn = make_button("Pause", icon="pause")
+        self.record_btn = make_button(tr("Record"), "danger", "record")
+        self.pause_btn = make_button(tr("Pause"), icon="pause")
         self.pause_btn.setEnabled(False)
-        self.stop_btn = make_button("Stop && keep", "primary", "stop")
+        self.stop_btn = make_button(tr("Stop && keep"), "primary", "stop")
         self.stop_btn.setEnabled(False)
-        cancel = make_button("Cancel")
+        cancel = make_button(tr("Cancel"))
         buttons.addWidget(self.record_btn)
         buttons.addWidget(self.pause_btn)
         buttons.addStretch(1)
@@ -301,7 +302,7 @@ class RecordDialog(QDialog):
             w.setEnabled(False)
         self.pause_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
-        self.status.setText("Recording…")
+        self.status.setText(tr("Recording…"))
         self._timer.start()
 
     def _pause(self) -> None:
@@ -309,14 +310,14 @@ class RecordDialog(QDialog):
             return
         if self.recorder.state == "recording":
             self.recorder.pause()
-            self.pause_btn.setText("Resume")
+            self.pause_btn.setText(tr("Resume"))
             self.pause_btn.setIcon(icons.icon("play", 16))
-            self.status.setText("Paused")
+            self.status.setText(tr("Paused"))
         else:
             self.recorder.resume()
-            self.pause_btn.setText("Pause")
+            self.pause_btn.setText(tr("Pause"))
             self.pause_btn.setIcon(icons.icon("pause", 16))
-            self.status.setText("Recording…")
+            self.status.setText(tr("Recording…"))
 
     def _tick(self) -> None:
         if self.recorder:
@@ -330,12 +331,12 @@ class RecordDialog(QDialog):
         try:
             self.result_source = self.recorder.stop()
         except devices.AudioDeviceError as exc:
-            QMessageBox.warning(self, "Record", str(exc))
+            QMessageBox.warning(self, tr("Record"), str(exc))
             return
         self.recorder = None
         if self.result_source.frames == 0:
             self.result_source = None
-            QMessageBox.information(self, "Record", "Nothing was recorded.")
+            QMessageBox.information(self, tr("Record"), tr("Nothing was recorded."))
             return
         self.accept()
 
@@ -355,36 +356,36 @@ class RecordDialog(QDialog):
 class AnalyzeDialog(QDialog):
     def __init__(self, stats: AudioStats, title: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Audio statistics")
+        self.setWindowTitle(tr("Audio statistics"))
         self.setModal(True)
         self.setMinimumWidth(480)
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 18)
         root.setSpacing(12)
-        head = QLabel("Audio statistics")
+        head = QLabel(tr("Audio statistics"))
         head.setProperty("role", "title")
         root.addWidget(head)
         sub = QLabel(title)
         sub.setProperty("role", "description")
         root.addWidget(sub)
         root.addWidget(divider())
-        names = ["Left", "Right"] if stats.channels == 2 else ["Mono"]
+        names = [tr("Left"), tr("Right")] if stats.channels == 2 else [tr("Mono")]
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
         grid.setVerticalSpacing(8)
         rows: list[tuple[str, list[str], Optional[str]]] = [
-            ("Duration", [format_time(stats.duration)], None),
-            ("Peak level", [f"{v:.1f} dBFS" for v in stats.peak_db], "bad" if max(stats.peak) >= 0.9999 else None),
-            ("Average level (RMS)", [f"{v:.1f} dBFS" for v in stats.rms_db], None),
-            ("DC offset", [f"{v * 100:+.2f} %" for v in stats.dc], "warn" if max(abs(v) for v in stats.dc) > 0.01 else None),
-            ("Clipped samples", [f"{stats.clipped:,}"], "bad" if stats.clipped else "good"),
+            (tr("Duration"), [format_time(stats.duration)], None),
+            (tr("Peak level"), [f"{v:.1f} dBFS" for v in stats.peak_db], "bad" if max(stats.peak) >= 0.9999 else None),
+            (tr("Average level (RMS)"), [f"{v:.1f} dBFS" for v in stats.rms_db], None),
+            (tr("DC offset"), [f"{v * 100:+.2f} %" for v in stats.dc], "warn" if max(abs(v) for v in stats.dc) > 0.01 else None),
+            (tr("Clipped samples"), [f"{stats.clipped:,}"], "bad" if stats.clipped else "good"),
         ]
         if stats.loudness is not None:
-            rows.append(("Integrated loudness", [f"{stats.loudness:.1f} LUFS"], None))
+            rows.append((tr("Integrated loudness"), [f"{stats.loudness:.1f} LUFS"], None))
             if stats.true_peak is not None:
-                rows.append(("True peak", [f"{stats.true_peak:.1f} dBTP"], None))
+                rows.append((tr("True peak"), [f"{stats.true_peak:.1f} dBTP"], None))
             if stats.loudness_range is not None:
-                rows.append(("Loudness range", [f"{stats.loudness_range:.1f} LU"], None))
+                rows.append((tr("Loudness range"), [f"{stats.loudness_range:.1f} LU"], None))
         grid.addWidget(QLabel(""), 0, 0)
         for i, n in enumerate(names):
             h = role_label(n.upper(), "section")
@@ -394,8 +395,8 @@ class AnalyzeDialog(QDialog):
             lab = QLabel(label)
             lab.setProperty("role", "dim")
             grid.addWidget(lab, r, 0)
-            if len(vals) == 1 and len(names) == 2 and label in ("Duration", "Clipped samples", "Integrated loudness",
-                                                                  "True peak", "Loudness range"):
+            if len(vals) == 1 and len(names) == 2 and label in (tr("Duration"), tr("Clipped samples"), tr("Integrated loudness"),
+                                                                  tr("True peak"), tr("Loudness range")):
                 v = QLabel(vals[0])
                 v.setFont(theme.mono_font(10.5))
                 v.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -413,9 +414,9 @@ class AnalyzeDialog(QDialog):
         root.addLayout(grid)
         hints = []
         if stats.clipped:
-            hints.append("Clipping detected: lower the level (Amplify) or use Normalize/Limiter.")
+            hints.append(tr("Clipping detected: lower the level (Amplify) or use Normalize/Limiter."))
         if max(abs(v) for v in stats.dc) > 0.01:
-            hints.append("A DC offset is present; Remove DC Offset will recentre the waveform.")
+            hints.append(tr("A DC offset is present; Remove DC Offset will recentre the waveform."))
         if hints:
             note = QLabel("\n".join(hints))
             note.setProperty("role", "warn")
@@ -423,9 +424,9 @@ class AnalyzeDialog(QDialog):
             root.addWidget(note)
         root.addWidget(divider())
         buttons = QHBoxLayout()
-        copy = make_button("Copy to clipboard", "ghost", "copy")
+        copy = make_button(tr("Copy to clipboard"), "ghost", "copy")
         copy.clicked.connect(lambda: QApplication.clipboard().setText(self._text(stats, names)))
-        ok = make_button("Close", "primary")
+        ok = make_button(tr("Close"), "primary")
         ok.clicked.connect(self.accept)
         buttons.addWidget(copy)
         buttons.addStretch(1)
@@ -434,12 +435,12 @@ class AnalyzeDialog(QDialog):
 
     @staticmethod
     def _text(stats: AudioStats, names: list[str]) -> str:
-        lines = [f"Duration: {format_time(stats.duration)}"]
+        lines = [tr(f"Duration: {format_time(stats.duration)}")]
         for i, n in enumerate(names):
-            lines.append(f"{n}: peak {stats.peak_db[i]:.1f} dBFS, RMS {stats.rms_db[i]:.1f} dBFS, DC {stats.dc[i] * 100:+.2f}%")
-        lines.append(f"Clipped samples: {stats.clipped}")
+            lines.append(tr(f"{n}: peak {stats.peak_db[i]:.1f} dBFS, RMS {stats.rms_db[i]:.1f} dBFS, DC {stats.dc[i] * 100:+.2f}%"))
+        lines.append(tr(f"Clipped samples: {stats.clipped}"))
         if stats.loudness is not None:
-            lines.append(f"Loudness: {stats.loudness:.1f} LUFS, true peak {stats.true_peak} dBTP, range {stats.loudness_range} LU")
+            lines.append(tr(f"Loudness: {stats.loudness:.1f} LUFS, true peak {stats.true_peak} dBTP, range {stats.loudness_range} LU"))
         return "\n".join(lines)
 
 
@@ -514,12 +515,12 @@ class SpectrumPlot(QWidget):
 class SpectrumDialog(QDialog):
     def __init__(self, seq: PieceSeq, a: int, b: int, title: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Frequency analysis")
+        self.setWindowTitle(tr("Frequency analysis"))
         self.seq, self.a, self.b = seq, a, b
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 18)
         root.setSpacing(10)
-        head = QLabel("Frequency analysis")
+        head = QLabel(tr("Frequency analysis"))
         head.setProperty("role", "title")
         root.addWidget(head)
         sub = QLabel(title)
@@ -530,18 +531,18 @@ class SpectrumDialog(QDialog):
         row = QHBoxLayout()
         self.size = QComboBox()
         for n in (1024, 2048, 4096, 8192, 16384, 32768):
-            self.size.addItem(f"{n} points", n)
+            self.size.addItem(tr(f"{n} points"), n)
         self.size.setCurrentIndex(3)
         self.peak = QLabel("")
         self.peak.setProperty("role", "dim")
-        legend = QLabel("●" if seq.channels == 1 else "●  Left   ●  Right")
+        legend = QLabel("●" if seq.channels == 1 else tr("●  Left   ●  Right"))
         legend.setProperty("role", "faint")
-        row.addWidget(QLabel("Resolution"))
+        row.addWidget(QLabel(tr("Resolution")))
         row.addWidget(self.size)
         row.addSpacing(16)
         row.addWidget(self.peak, 1)
         row.addWidget(legend)
-        close = make_button("Close", "primary")
+        close = make_button(tr("Close"), "primary")
         close.clicked.connect(self.accept)
         row.addWidget(close)
         root.addLayout(row)
@@ -555,7 +556,7 @@ class SpectrumDialog(QDialog):
         mix = db.max(axis=0)
         mask = freqs >= 20
         i = int(np.argmax(np.where(mask, mix, -1e9)))
-        self.peak.setText(f"Strongest component: {freqs[i]:.0f} Hz at {mix[i]:.1f} dBFS")
+        self.peak.setText(tr(f"Strongest component: {freqs[i]:.0f} Hz at {mix[i]:.1f} dBFS"))
 
 
 # ------------------------------------------------------------------ export
@@ -563,6 +564,7 @@ class ExportDialog(QDialog):
     def __init__(self, parent: Optional[QWidget], default_path: Path, settings: EncodeSettings, src_sr: int,
                  src_channels: int, *, has_selection: bool = False, title: str = "Save as") -> None:
         super().__init__(parent)
+        title = tr(title)
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumWidth(560)
@@ -575,7 +577,7 @@ class ExportDialog(QDialog):
         root.addWidget(head)
         row = QHBoxLayout()
         self.path = QLineEdit(str(default_path))
-        browse = make_button("Browse…")
+        browse = make_button(tr("Browse…"))
         browse.clicked.connect(self._browse)
         row.addWidget(self.path, 1)
         row.addWidget(browse)
@@ -583,7 +585,7 @@ class ExportDialog(QDialog):
         self.picker = FormatPicker(settings)
         self.picker.set_source(src_sr, src_channels)
         root.addWidget(self.picker)
-        self.selection_only = QCheckBox("Save only the selected part")
+        self.selection_only = QCheckBox(tr("Save only the selected part"))
         self.selection_only.setVisible(has_selection)
         self.selection_only.setChecked(False)          # never the default: it would silently drop the rest
         root.addWidget(self.selection_only)
@@ -593,9 +595,9 @@ class ExportDialog(QDialog):
         root.addWidget(divider())
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        cancel = make_button("Cancel")
+        cancel = make_button(tr("Cancel"))
         cancel.clicked.connect(self.reject)
-        ok = make_button("Save", "primary")
+        ok = make_button(tr("Save"), "primary")
         ok.setDefault(True)
         ok.clicked.connect(self._ok)
         buttons.addWidget(cancel)
@@ -614,7 +616,7 @@ class ExportDialog(QDialog):
 
     def _browse(self) -> None:
         spec = self.picker.settings().spec
-        name, _ = QFileDialog.getSaveFileName(self, "Save as", self.path.text(), f"{spec.name} (*{spec.ext})")
+        name, _ = QFileDialog.getSaveFileName(self, tr("Save as"), self.path.text(), f"{tr(spec.name)} (*{spec.ext})")
         if name:
             self.path.setText(str(Path(name).with_suffix(spec.ext)))
 
@@ -631,7 +633,7 @@ class ExportDialog(QDialog):
 class AboutDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("About Tonewright")
+        self.setWindowTitle(tr("About Tonewright"))
         self.setModal(True)
         self.setFixedWidth(440)
         root = QVBoxLayout(self)
@@ -641,11 +643,11 @@ class AboutDialog(QDialog):
         logo.setPixmap(icons.logo_pixmap(72))
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(logo)
-        name = QLabel("Tonewright")
+        name = QLabel(tr("Tonewright"))
         name.setProperty("role", "title")
         name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(name)
-        ver = QLabel(f"Version {__version__}  ·  audio converter, editor and audiobook maker")
+        ver = QLabel(tr(f"Version {__version__}  ·  audio converter, editor and audiobook maker"))
         ver.setProperty("role", "dim")
         ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ver.setWordWrap(True)
@@ -655,14 +657,14 @@ class AboutDialog(QDialog):
                                           creationflags=getattr(ffmpeg.subprocess, "CREATE_NO_WINDOW", 0)
                                           ).stdout.decode("utf-8", "replace").splitlines()[0]
         except Exception:
-            ffver = "FFmpeg not found"
-        info = QLabel(f"Powered by FFmpeg ({ffver.replace('ffmpeg version ', '').split(' Copyright')[0]}),\n"
-                      "PySide6 (Qt) and NumPy. Everything runs offline on this PC.")
+            ffver = tr("FFmpeg not found")
+        info = QLabel(tr(f"Powered by FFmpeg ({ffver.replace('ffmpeg version ', '').split(' Copyright')[0]}),\n"
+                      "PySide6 (Qt) and NumPy. Everything runs offline on this PC."))
         info.setProperty("role", "faint")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(info)
         root.addWidget(divider())
-        ok = make_button("Close", "primary")
+        ok = make_button(tr("Close"), "primary")
         ok.clicked.connect(self.accept)
         root.addWidget(ok, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -674,6 +676,6 @@ def ask_time(parent: QWidget, title: str, label: str, current: float) -> Optiona
         return None
     value = parse_time(text)
     if value is None:
-        QMessageBox.warning(parent, title, "That is not a valid time. Try 1:23.5, 83.5 or 0:01:23.500.")
+        QMessageBox.warning(parent, title, tr("That is not a valid time. Try 1:23.5, 83.5 or 0:01:23.500."))
         return None
     return value

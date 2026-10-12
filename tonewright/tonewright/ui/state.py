@@ -15,6 +15,7 @@ from ..core.convert import ConvertItem
 from ..core.document import Clip, Document
 from ..core.settings import Favorites, Settings
 from .stage import ViewState
+from ..i18n import tr
 
 MODES = ("convert", "edit", "tags", "audiobook")
 _ids = itertools.count(1)
@@ -87,9 +88,9 @@ class LibraryItem:
         codec = (self.doc.meta.get("codec") if self.doc is not None else None) or (self.stream.codec if self.stream else "")
         depth = (self.doc.meta.get("bits") if self.doc is not None else None) or (self.stream.bits if self.stream else 0)
         if depth and str(codec).startswith(lossless):
-            bits = f" · {depth}-bit"
+            bits = tr(f" · {depth}-bit")
         sr, ch = (self.doc.sr, self.doc.channels) if self.doc is not None else (self.sr, self.channels)
-        return f"{sr} Hz{bits} · {'Mono' if ch == 1 else 'Stereo'}"
+        return f"{tr(f'{sr} Hz')}{bits} · {tr('Mono') if ch == 1 else tr('Stereo')}"
 
     def to_convert_item(self) -> ConvertItem:
         """What the converter should encode: the edited document if there is one, else the file."""

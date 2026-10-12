@@ -80,6 +80,17 @@ FFmpeg audio filter chain (for example `lowpass=f=3000,volume=2`).
 * **Command palette:** `Ctrl+K` finds any command or effect by name.
 * **Light and dark themes** (the sun button).
 
+## Languages
+
+Tonewright speaks **English** and **Ukrainian (українська)**. By default it follows the Windows display
+language; change it any time under **View → Language** (it applies the next time you start the app).
+The installer's own screens are translated too.
+
+![Ukrainian interface](docs/convert-uk.png)
+
+Adding another language means one new file in `tonewright/locales/` (see `tonewright/i18n.py` for the format);
+`tests/test_i18n.py` fails if any string the app shows has no translation or if English leaks into the interface.
+
 ## Keyboard shortcuts
 
 | | | | |

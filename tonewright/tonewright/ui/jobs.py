@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit
 from ..core.common import Cancelled, CancelToken, PauseToken
 from . import icons
 from .widgets import make_button
+from ..i18n import tr
 
 
 class Job(QThread):
@@ -69,19 +70,19 @@ class JobBar(QFrame):
         lay.setSpacing(8)
         top = QHBoxLayout()
         top.setSpacing(10)
-        lab = QLabel(path_label)
+        lab = QLabel(tr(path_label))
         lab.setProperty("role", "dim")
         self.path = QLineEdit()
         self.path.setMinimumWidth(240)
         self.path.editingFinished.connect(lambda: self.pathEdited.emit(self.path.text()))
-        self.browse = make_button("Browse…", icon="folder")
+        self.browse = make_button(tr("Browse…"), icon="folder")
         self.browse.clicked.connect(self.browseClicked)
         top.addWidget(lab)
         top.addWidget(self.path, 1)
         top.addWidget(self.browse)
         self.same_folder: Optional[QCheckBox] = None
         if same_folder_option:
-            self.same_folder = QCheckBox("Same folder as the source")
+            self.same_folder = QCheckBox(tr("Same folder as the source"))
             top.addWidget(self.same_folder)
             self.same_folder.toggled.connect(self._same_toggled)
         lay.addLayout(top)
@@ -105,9 +106,9 @@ class JobBar(QFrame):
         self.status.setProperty("role", "dim")
         info.addWidget(self.status)
         bottom.addLayout(info, 1)
-        self.stop_btn = make_button("Stop", "danger", "stop")
+        self.stop_btn = make_button(tr("Stop"), "danger", "stop")
         self.stop_btn.setVisible(False)
-        self.pause_btn = make_button("Pause", icon="pause")
+        self.pause_btn = make_button(tr("Pause"), icon="pause")
         self.pause_btn.setVisible(False)
         self.primary = QPushButton(primary_text)
         self.primary.setProperty("variant", "primary")
@@ -136,25 +137,25 @@ class JobBar(QFrame):
             self.same_folder.setEnabled(not running)
         if running:
             self._paused = False
-            self.pause_btn.setText("Pause")
+            self.pause_btn.setText(tr("Pause"))
             self.pause_btn.setIcon(icons.icon("pause", 16))
 
     def set_progress(self, frac: float, text: Optional[str] = None) -> None:
         self.bar.setValue(int(max(0.0, min(1.0, frac)) * 1000))
-        self.percent.setText(text if text is not None else f"Completed {int(frac * 100)} %")
+        self.percent.setText(text if text is not None else tr(f"Completed {int(frac * 100)} %"))
 
     def reset_progress(self) -> None:
         self.bar.setValue(0)
         self.percent.setText("")
 
     def set_status(self, text: str, role: str = "dim") -> None:
-        self.status.setText(text)
+        self.status.setText(tr(text))
         self.status.setProperty("role", role)
         self.status.style().unpolish(self.status)
         self.status.style().polish(self.status)
 
     def _toggle_pause(self) -> None:
         self._paused = not self._paused
-        self.pause_btn.setText("Resume" if self._paused else "Pause")
+        self.pause_btn.setText(tr("Resume") if self._paused else tr("Pause"))
         self.pause_btn.setIcon(icons.icon("play" if self._paused else "pause", 16))
         self.pauseToggled.emit(self._paused)

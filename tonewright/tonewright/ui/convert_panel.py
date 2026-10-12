@@ -14,6 +14,7 @@ from ..core.formats import EncodeSettings
 from ..core.settings import Settings
 from .format_picker import FormatPicker
 from .widgets import divider, role_label, section_label, shrinkable
+from ..i18n import tr, width_scale
 
 PATTERNS = [("Original name", "{name}"), ("Artist - Title", "{artist} - {title}"),
             ("Track - Title", "{track} - {title}"), ("Track - Artist - Title", "{track} - {artist} - {title}"),
@@ -26,7 +27,7 @@ def _row(label: str, widget: QWidget, width: int = 110) -> QWidget:
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(10)
     lab = QLabel(label)
-    lab.setFixedWidth(width)
+    lab.setFixedWidth(int(width * width_scale()))
     lab.setProperty("role", "dim")
     lay.addWidget(lab)
     lay.addWidget(widget, 1)
@@ -49,85 +50,85 @@ class ConvertPanel(QScrollArea):
         lay.setContentsMargins(16, 14, 16, 16)
         lay.setSpacing(12)
 
-        lay.addWidget(section_label("Output format"))
+        lay.addWidget(section_label(tr("Output format")))
         self.picker = FormatPicker(EncodeSettings.from_dict(saved.get("encode")))
         lay.addWidget(self.picker)
         lay.addWidget(divider())
 
-        lay.addWidget(section_label("Process"))
+        lay.addWidget(section_label(tr("Process")))
         self.normalize = QComboBox()
-        self.normalize.addItem("Off", "off")
-        self.normalize.addItem("Peak level", "peak")
-        self.normalize.addItem("Loudness (LUFS)", "lufs")
-        lay.addWidget(_row("Normalize", shrinkable(self.normalize)))
+        self.normalize.addItem(tr("Off"), "off")
+        self.normalize.addItem(tr("Peak level"), "peak")
+        self.normalize.addItem(tr("Loudness (LUFS)"), "lufs")
+        lay.addWidget(_row(tr("Normalize"), shrinkable(self.normalize)))
         self.peak = QDoubleSpinBox()
         self.peak.setRange(-30.0, 0.0)
         self.peak.setSingleStep(0.5)
-        self.peak.setSuffix(" dB")
+        self.peak.setSuffix(tr(" dB"))
         self.peak.setValue(float(saved.get("peak_target", -1.0)))
-        self.peak_row = _row("Peak target", self.peak)
+        self.peak_row = _row(tr("Peak target"), self.peak)
         self.lufs = QDoubleSpinBox()
         self.lufs.setRange(-30.0, -5.0)
         self.lufs.setSingleStep(0.5)
         self.lufs.setSuffix(" LUFS")
         self.lufs.setValue(float(saved.get("lufs_target", -16.0)))
-        self.lufs_row = _row("Loudness target", self.lufs)
+        self.lufs_row = _row(tr("Loudness target"), self.lufs)
         lay.addWidget(self.peak_row)
         lay.addWidget(self.lufs_row)
         self.fade_in = QDoubleSpinBox()
         self.fade_in.setRange(0.0, 60.0)
         self.fade_in.setSingleStep(0.5)
-        self.fade_in.setSuffix(" s")
+        self.fade_in.setSuffix(tr(" s"))
         self.fade_in.setValue(float(saved.get("fade_in", 0.0)))
         self.fade_out = QDoubleSpinBox()
         self.fade_out.setRange(0.0, 60.0)
         self.fade_out.setSingleStep(0.5)
-        self.fade_out.setSuffix(" s")
+        self.fade_out.setSuffix(tr(" s"))
         self.fade_out.setValue(float(saved.get("fade_out", 0.0)))
-        lay.addWidget(_row("Fade in", self.fade_in))
-        lay.addWidget(_row("Fade out", self.fade_out))
-        self.merge = QCheckBox("Join all files into one")
+        lay.addWidget(_row(tr("Fade in"), self.fade_in))
+        lay.addWidget(_row(tr("Fade out"), self.fade_out))
+        self.merge = QCheckBox(tr("Join all files into one"))
         self.merge.setChecked(bool(saved.get("merge", False)))
         lay.addWidget(self.merge)
-        self.merge_name = QLineEdit(str(saved.get("merge_name", "Merged")))
-        self.merge_name_row = _row("Joined name", self.merge_name)
+        self.merge_name = QLineEdit(str(saved.get("merge_name", tr("Merged"))))
+        self.merge_name_row = _row(tr("Joined name"), self.merge_name)
         self.gap = QDoubleSpinBox()
         self.gap.setRange(0.0, 30.0)
         self.gap.setSingleStep(0.5)
-        self.gap.setSuffix(" s")
+        self.gap.setSuffix(tr(" s"))
         self.gap.setValue(float(saved.get("gap", 0.0)))
-        self.gap_row = _row("Pause between", self.gap)
+        self.gap_row = _row(tr("Pause between"), self.gap)
         lay.addWidget(self.merge_name_row)
         lay.addWidget(self.gap_row)
-        self.merge_note = QLabel("Normalizing is skipped when joining files.")
+        self.merge_note = QLabel(tr("Normalizing is skipped when joining files."))
         self.merge_note.setProperty("role", "faint")
         self.merge_note.setWordWrap(True)
         lay.addWidget(self.merge_note)
         lay.addWidget(divider())
 
-        lay.addWidget(section_label("Names and tags"))
+        lay.addWidget(section_label(tr("Names and tags")))
         self.pattern = QComboBox()
         self.pattern.setEditable(True)
         for label, pat in PATTERNS:
-            self.pattern.addItem(label, pat)
+            self.pattern.addItem(tr(label), pat)
         pat = str(saved.get("pattern", "{name}"))
         idx = self.pattern.findData(pat)
         if idx >= 0:
             self.pattern.setCurrentIndex(idx)
         else:
             self.pattern.setEditText(pat)
-        self.pattern.setToolTip("Tokens: {name} {title} {artist} {album} {album_artist} {track} {year} {genre}")
-        lay.addWidget(_row("File name", shrinkable(self.pattern)))
+        self.pattern.setToolTip(tr("Tokens: {name} {title} {artist} {album} {album_artist} {track} {year} {genre}"))
+        lay.addWidget(_row(tr("File name"), shrinkable(self.pattern)))
         self.conflict = QComboBox()
-        self.conflict.addItem("Keep both (add a number)", "rename")
-        self.conflict.addItem("Replace the existing file", "overwrite")
-        self.conflict.addItem("Skip it", "skip")
+        self.conflict.addItem(tr("Keep both (add a number)"), "rename")
+        self.conflict.addItem(tr("Replace the existing file"), "overwrite")
+        self.conflict.addItem(tr("Skip it"), "skip")
         self.conflict.setCurrentIndex(max(0, self.conflict.findData(saved.get("conflict", "rename"))))
-        lay.addWidget(_row("If it exists", shrinkable(self.conflict)))
-        self.keep_tags = QCheckBox("Keep tags and cover art")
+        lay.addWidget(_row(tr("If it exists"), shrinkable(self.conflict)))
+        self.keep_tags = QCheckBox(tr("Keep tags and cover art"))
         self.keep_tags.setChecked(bool(saved.get("keep_tags", True)))
         lay.addWidget(self.keep_tags)
-        note = QLabel("The original file is never replaced, even when asked to.")
+        note = QLabel(tr("The original file is never replaced, even when asked to."))
         note.setWordWrap(True)
         note.setProperty("role", "faint")
         lay.addWidget(note)
@@ -160,7 +161,7 @@ class ConvertPanel(QScrollArea):
     def pattern_text(self) -> str:
         text = self.pattern.currentText().strip()
         for label, pat in PATTERNS:
-            if text == label:
+            if text in (label, tr(label)):
                 return pat
         return text or "{name}"
 
@@ -170,7 +171,7 @@ class ConvertPanel(QScrollArea):
             conflict=self.conflict.currentData(), normalize=self.normalize.currentData(),
             peak_target_db=self.peak.value(), lufs_target=self.lufs.value(), fade_in=self.fade_in.value(),
             fade_out=self.fade_out.value(), keep_tags=self.keep_tags.isChecked(), merge=self.merge.isChecked(),
-            merge_name=self.merge_name.text().strip() or "Merged", gap_seconds=self.gap.value())
+            merge_name=self.merge_name.text().strip() or tr("Merged"), gap_seconds=self.gap.value())
 
     def save(self) -> None:
         self.settings.set("convert", {

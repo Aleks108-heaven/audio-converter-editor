@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QDialog, QFileDialog,
                                QMenu, QMessageBox, QPushButton, QSplitter, QStackedWidget, QToolButton, QVBoxLayout,
                                QWidget)
 
-from .. import __version__
+from .. import __version__, i18n
 from ..core import audiobook, formats
 from ..core import effects as fx
 from ..core import ffmpeg
@@ -35,6 +35,7 @@ from .tags_panel import TagsPage
 from .tasks import run_task
 from .transport import TransportBar
 from .widgets import divider, icon_button, make_button
+from ..i18n import tr
 
 MODE_INFO = [("convert", "Convert", "convert"), ("edit", "Edit", "waveform"), ("tags", "Tags", "tag"),
              ("audiobook", "Audiobook", "book")]
@@ -61,7 +62,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.state = state
         self.actions: dict[str, QAction] = {}
-        self.setWindowTitle("Tonewright")
+        self.setWindowTitle(tr("Tonewright"))
         self.setWindowIcon(icons.app_icon())
         self.setAcceptDrops(True)
         self.resize(1480, 900)
@@ -83,13 +84,13 @@ class MainWindow(QMainWindow):
     # ================================================================ actions
     def _act(self, key: str, text: str, slot: Callable, shortcut=None, icon: Optional[str] = None,
              tip: str = "", checkable: bool = False, checked: bool = False) -> QAction:
-        a = QAction(text, self)
+        a = QAction(tr(text), self)
         if icon:
             icons.bind(a, icon, 18)
         if shortcut:
             seqs = shortcut if isinstance(shortcut, list) else [shortcut]
             a.setShortcuts([QKeySequence(s) for s in seqs])
-        a.setToolTip(tip or text)
+        a.setToolTip(tr(tip or text))
         a.setCheckable(checkable)
         if checkable:
             a.setChecked(checked)
@@ -178,7 +179,7 @@ class MainWindow(QMainWindow):
             act(f"gen_{kind}", text, (lambda k=kind: self.ctl.generate(k)), None, ic)
         # modes and help
         for i, (key, text, ic) in enumerate(MODE_INFO, start=1):
-            act(f"mode_{key}", text, (lambda k=key: self.set_mode(k)), f"Ctrl+{i}", ic)
+            act(f"mode_{key}", tr(text, "mode"), (lambda k=key: self.set_mode(k)), f"Ctrl+{i}", ic)
         act("palette", "Command palette", lambda: self.palette.open_palette(), "Ctrl+K", "search", "Search every command  (Ctrl+K)")
         act("effects_search", "Find an effect…", self._focus_effects, "Ctrl+E", "wand")
         act("about", "About Tonewright", lambda: AboutDialog(self).exec(), None, "info")
@@ -211,7 +212,7 @@ class MainWindow(QMainWindow):
         logo = QLabel()
         logo.setPixmap(icons.logo_pixmap(30))
         hl.addWidget(logo)
-        name = QLabel("Tonewright")
+        name = QLabel(tr("Tonewright"))
         name.setStyleSheet("font-size: 12.5pt; font-weight: 700; padding: 0 10px 0 6px;")
         hl.addWidget(name)
         self.menu_bar = self.menuBar()
@@ -222,26 +223,26 @@ class MainWindow(QMainWindow):
         self.mode_buttons: dict[str, QToolButton] = {}
         for key, text, ic in MODE_INFO:
             b = QToolButton()
-            b.setText(text)
+            b.setText(tr(text, "mode"))
             icons.bind(b, ic, 18)
             b.setProperty("role", "tab")
             b.setCheckable(True)
             b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setToolTip(f"{text}  (Ctrl+{[m[0] for m in MODE_INFO].index(key) + 1})")
+            b.setToolTip(f"{tr(text, 'mode')}  (Ctrl+{[m[0] for m in MODE_INFO].index(key) + 1})")
             b.clicked.connect(lambda _=False, k=key: self.set_mode(k))
             self.mode_group.addButton(b)
             self.mode_buttons[key] = b
             hl.addWidget(b)
         hl.addStretch(1)
-        self.palette_btn = QPushButton("  Search commands")
+        self.palette_btn = QPushButton(tr("  Search commands"))
         self.palette_btn.setProperty("variant", "ghost")
         icons.bind(self.palette_btn, "search", 16)
-        self.palette_btn.setToolTip("Ctrl+K")
+        self.palette_btn.setToolTip(tr("Ctrl+K"))
         self.palette_btn.setMinimumWidth(170)
         self.palette_btn.clicked.connect(lambda: self.palette.open_palette())
         hl.addWidget(self.palette_btn)
-        self.theme_btn = icon_button("sun", "Switch theme")
+        self.theme_btn = icon_button("sun", tr("Switch theme"))
         self.theme_btn.clicked.connect(self.toggle_theme)
         hl.addWidget(self.theme_btn)
 
@@ -292,16 +293,16 @@ class MainWindow(QMainWindow):
             b = tool(key)
             b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             tl.addWidget(b)
-        self.env_apply = make_button("Apply envelope", "primary", "check")
+        self.env_apply = make_button(tr("Apply envelope"), "primary", "check")
         self.env_apply.clicked.connect(lambda: self.ctl.apply_envelope())
-        self.env_reset = make_button("Reset", "ghost")
+        self.env_reset = make_button(tr("Reset"), "ghost")
         self.env_reset.clicked.connect(lambda: self.stage.reset_envelope())
         tl.addWidget(self.env_apply)
         tl.addWidget(self.env_reset)
         tl.addSpacing(6)
         tl.addWidget(divider(True))
         tl.addSpacing(8)
-        recent_lab = QLabel("RECENT EFFECTS")
+        recent_lab = QLabel(tr("RECENT EFFECTS"))
         recent_lab.setProperty("role", "section")
         tl.addWidget(recent_lab)
         tl.addSpacing(6)
@@ -349,8 +350,8 @@ class MainWindow(QMainWindow):
         self.splitter.setSizes([310, 800, 370])
 
         # ---- bottom bars
-        self.convert_bar = JobBar("Convert now", "Output folder", same_folder_option=True)
-        self.book_bar = JobBar("Create audiobook", "Save as")
+        self.convert_bar = JobBar(tr("Convert now"), tr("Output folder"), same_folder_option=True)
+        self.book_bar = JobBar(tr("Create audiobook"), tr("Save as"))
         self.convert_bar.path.setText(self.state.settings.get("output_dir") or str(Path.home() / "Music"))
         self.convert_bar.same_folder.setChecked(bool(self.state.settings.get("same_folder", False)))
         self.convert_bar._same_toggled(self.convert_bar.same_folder.isChecked())
@@ -376,10 +377,10 @@ class MainWindow(QMainWindow):
 
     def _build_menus(self) -> None:
         mb, a = self.menu_bar, self.actions
-        file = mb.addMenu("File")
+        file = mb.addMenu(tr("File"))
         for key in ("new", "open", "import_video"):
             file.addAction(a[key])
-        self.recent_menu = file.addMenu("Open recent")
+        self.recent_menu = file.addMenu(tr("Open recent"))
         self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
         file.addSeparator()
         for key in ("save", "save_as", "close_item"):
@@ -392,54 +393,63 @@ class MainWindow(QMainWindow):
         file.addSeparator()
         file.addAction(a["quit"])
 
-        edit = mb.addMenu("Edit")
+        edit = mb.addMenu(tr("Edit"))
         for key in ("undo", "redo", None, "cut", "copy", "paste", "paste_new", "delete", None, "trim", "silence_sel",
                     None, "select_all", "select_none", "goto", None, "add_marker", "prev_marker", "next_marker"):
             edit.addSeparator() if key is None else edit.addAction(a[key])
 
-        view = mb.addMenu("View")
+        view = mb.addMenu(tr("View"))
         for key in ("view_waveform", "view_spectral", "view_envelope", None, "zoom_in", "zoom_out", "zoom_selection",
                     "zoom_fit", "zoom_samples", "vzoom_in", "vzoom_out", None, "show_db", "follow", "snap_zero",
                     "spec_log"):
             view.addSeparator() if key is None else view.addAction(a[key])
         view.addSeparator()
-        res = view.addMenu("Spectrogram detail")
+        res = view.addMenu(tr("Spectrogram detail"))
         grp = QActionGroup(self)
         for n in (1024, 2048, 4096, 8192):
-            act = res.addAction(f"{n} points")
+            act = res.addAction(tr(f"{n} points"))
             act.setCheckable(True)
             act.setChecked(n == int(self.state.settings.get("spectrogram_fft", 2048)))
             act.triggered.connect(lambda _=False, v=n: self._set_spec_fft(v))
             grp.addAction(act)
         view.addAction(a["theme"])
+        lang_menu = view.addMenu(tr("Language"))
+        lang_group = QActionGroup(self)
+        chosen = self.state.settings.get("language", "auto")
+        for code, name in (("auto", tr("Automatic (follow Windows)")), *i18n.LANGUAGES):
+            lang_act = lang_menu.addAction(name)
+            lang_act.setCheckable(True)
+            lang_act.setChecked(chosen == code or (code == "auto" and chosen not in dict(i18n.LANGUAGES)))
+            lang_act.triggered.connect(lambda _=False, c=code: self._set_language(c))
+            lang_group.addAction(lang_act)
 
-        effects = mb.addMenu("Effects")
+        effects = mb.addMenu(tr("Effects"))
         for category, items in fx.by_category():
-            sub = effects.addMenu(category)
+            sub = effects.addMenu(tr(category))
             for e in items:
-                act = sub.addAction(e.name)
-                act.setToolTip(e.description)
+                act = sub.addAction(tr(e.name))
+                act.setToolTip(tr(e.description))
                 act.triggered.connect(lambda _=False, eid=e.id: self.ctl.open_effect(eid))
         effects.addSeparator()
         effects.addAction(a["repeat_effect"])
         effects.addAction(a["effects_search"])
 
-        gen = mb.addMenu("Generate")
+        gen = mb.addMenu(tr("Generate"))
         for k in ("silence", "tone", "noise", "dtmf", "speech"):
             gen.addAction(a[f"gen_{k}"])
 
-        tools = mb.addMenu("Tools")
+        tools = mb.addMenu(tr("Tools"))
         for key in ("analyze", "spectrum", "silence_tools", "convert_format"):
             tools.addAction(a[key])
 
-        mix = mb.addMenu("Mix")
+        mix = mb.addMenu(tr("Mix"))
         for key in ("mix_paste", "mix_file", "insert_file"):
             mix.addAction(a[key])
 
-        self.fav_menu = mb.addMenu("Favorites")
+        self.fav_menu = mb.addMenu(tr("Favorites"))
         self.fav_menu.aboutToShow.connect(self._fill_fav_menu)
 
-        help_menu = mb.addMenu("Help")
+        help_menu = mb.addMenu(tr("Help"))
         for key in ("palette", "shortcuts", "data_folder", "about"):
             help_menu.addAction(a[key])
 
@@ -513,17 +523,17 @@ class MainWindow(QMainWindow):
                       "mode_audiobook": "Go to", "about": "Help", "shortcuts": "Help", "repeat_effect": "Effects"}
             for key, group in groups.items():
                 a = self.actions[key]
-                cmds.append(Command(a.text().replace("&", "").rstrip("…"), group, a.trigger, a.shortcut().toString(),
+                cmds.append(Command(a.text().replace("&", "").rstrip("…"), tr(group), a.trigger, a.shortcut().toString(),
                                     key.replace("_", " "), "", a.isEnabled()))
             for kind in ("silence", "tone", "noise", "dtmf", "speech"):
                 a = self.actions[f"gen_{kind}"]
-                cmds.append(Command(f"Generate {a.text().rstrip('…').lower()}", "Generate", a.trigger, "", "create sound", "", a.isEnabled()))
+                cmds.append(Command(tr(f"Generate {a.text().rstrip('…').lower()}"), tr("Generate"), a.trigger, "", "create sound", "", a.isEnabled()))
             has_doc = self.ctl.doc is not None and self.state.mode != "tags"
             for e in fx.all_effects():
-                cmds.append(Command(e.name, e.category, (lambda eid=e.id: self.ctl.open_effect(eid)), "",
-                                    f"{e.keywords} {e.description}", "wand", has_doc))
+                cmds.append(Command(tr(e.name), tr(e.category), (lambda eid=e.id: self.ctl.open_effect(eid)), "",
+                                    f"{e.name} {e.keywords} {e.description}", "wand", has_doc))
             for fav in self.state.favorites.items:
-                cmds.append(Command(f"★ {fav['name']}", "Favorite", (lambda n=fav["name"]: self.ctl.apply_favorite(n, False)),
+                cmds.append(Command(f"★ {fav['name']}", tr("Favorite"), (lambda n=fav["name"]: self.ctl.apply_favorite(n, False)),
                                     "", fav["effect"], "star", has_doc))
             self.palette.set_commands(cmds)
 
@@ -618,14 +628,14 @@ class MainWindow(QMainWindow):
         t = theme.current()
         playing = ctl.player.state == "playing" and not busy_preview
         a["play"].setIcon(icons.icon("pause" if playing else "play", 22, color=t.accent_fg))
-        a["play"].setText("Pause" if playing else "Play")
+        a["play"].setText(tr("Pause") if playing else tr("Play"))
         self.env_apply.setVisible(env and editing)
         self.env_reset.setVisible(env and editing)
         self.undo_btn.setEnabled(a["undo"].isEnabled())
         self.redo_btn.setEnabled(a["redo"].isEnabled())
         self.status_right.setText(self._status_right())
-        self.theme_btn.setToolTip("Switch to the light theme" if t.name == "dark" else "Switch to the dark theme")
-        a["theme"].setText("Switch to light theme" if t.name == "dark" else "Switch to dark theme")
+        self.theme_btn.setToolTip(tr("Switch to the light theme") if t.name == "dark" else tr("Switch to the dark theme"))
+        a["theme"].setText(tr("Switch to light theme") if t.name == "dark" else tr("Switch to dark theme"))
 
     def _status_right(self) -> str:
         item = self.state.current
@@ -634,14 +644,14 @@ class MainWindow(QMainWindow):
         doc = item.doc
         parts = [item.format_text()]
         if doc is not None:
-            parts.append(f"{format_size(doc.frames * doc.channels * 4)} in memory")
+            parts.append(tr(f"{format_size(doc.frames * doc.channels * 4)} in memory"))
             if doc.history_index:
-                parts.append(f"{doc.history_index} edit{'s' if doc.history_index != 1 else ''}")
+                parts.append(tr(f"{doc.history_index} edit{'s' if doc.history_index != 1 else ''}"))
         return "  ·  ".join(parts)
 
     def _update_title(self) -> None:
         item = self.state.current
-        self.setWindowTitle(f"{item.title}  —  Tonewright" if item else "Tonewright")
+        self.setWindowTitle(tr(f"{item.title}  —  Tonewright") if item else tr("Tonewright"))
 
     def _flash(self, text: str) -> None:
         self.status_msg.setText(text)
@@ -662,9 +672,9 @@ class MainWindow(QMainWindow):
                 ids.append(fallback)
         for eid in ids[:5]:
             e = fx.get(eid)
-            b = QPushButton(e.name)
+            b = QPushButton(tr(e.name))
             b.setProperty("variant", "ghost")
-            b.setToolTip(e.description)
+            b.setToolTip(tr(e.description))
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False, i=eid: self.ctl.open_effect(i))
             self.recent_box.addWidget(b)
@@ -676,7 +686,7 @@ class MainWindow(QMainWindow):
         if doc is None:
             return
         for n, label in enumerate(doc.undo_labels()[:15], start=1):
-            self.undo_menu.addAction(f"{n}.  {label}", lambda k=n: self.ctl.undo_steps(k))
+            self.undo_menu.addAction(f"{n}.  {tr(label)}", lambda k=n: self.ctl.undo_steps(k))
 
     def _fill_redo_menu(self) -> None:
         self.redo_menu.clear()
@@ -684,29 +694,29 @@ class MainWindow(QMainWindow):
         if doc is None:
             return
         for n, label in enumerate(doc.redo_labels()[:15], start=1):
-            self.redo_menu.addAction(f"{n}.  {label}", lambda k=n: self.ctl.redo_steps(k))
+            self.redo_menu.addAction(f"{n}.  {tr(label)}", lambda k=n: self.ctl.redo_steps(k))
 
     def _fill_recent_menu(self) -> None:
         self.recent_menu.clear()
         files = self.state.settings.recent_files()
         if not files:
-            self.recent_menu.addAction("No recent files").setEnabled(False)
+            self.recent_menu.addAction(tr("No recent files")).setEnabled(False)
             return
         for f in files:
             self.recent_menu.addAction(Path(f).name, lambda p=f: self.ctl.open_paths([Path(p)])).setToolTip(f)
         self.recent_menu.addSeparator()
-        self.recent_menu.addAction("Clear list", self.state.settings.clear_recent_files)
+        self.recent_menu.addAction(tr("Clear list"), self.state.settings.clear_recent_files)
 
     def _fill_fav_menu(self) -> None:
         self.fav_menu.clear()
         favs = self.state.favorites.items
         if not favs:
-            self.fav_menu.addAction("No favorites yet").setEnabled(False)
+            self.fav_menu.addAction(tr("No favorites yet")).setEnabled(False)
         for fav in favs:
             self.fav_menu.addAction(icons.icon("star", 16), fav["name"],
                                     lambda n=fav["name"]: self.ctl.apply_favorite(n, False)).setEnabled(self.ctl.doc is not None)
         self.fav_menu.addSeparator()
-        self.fav_menu.addAction("Manage favorites…", lambda: (self.set_mode("edit"), self.edit_panel.show_tab("Favorites")))
+        self.fav_menu.addAction(tr("Manage favorites…"), lambda: (self.set_mode("edit"), self.edit_panel.show_tab("Favorites")))
 
     def _stage_menu(self, pos: QPoint) -> None:
         a = self.actions
@@ -724,14 +734,14 @@ class MainWindow(QMainWindow):
     def _show_shortcuts(self) -> None:
         rows = [(a.text().replace("&", "").rstrip("…"), a.shortcut().toString()) for k, a in self.actions.items()
                 if not a.shortcut().isEmpty() and not k.startswith("mode_")]
-        rows += [("Mode: Convert / Edit / Tags / Audiobook", "Ctrl+1 … Ctrl+4"), ("Zoom", "Mouse wheel"),
-                 ("Scroll", "Shift + wheel, or middle-drag"), ("Vertical zoom", "Ctrl + wheel"),
-                 ("Move the cursor", "← →  (Ctrl = 1 second)"), ("Extend the selection", "Shift + ← →")]
+        rows += [(tr("Mode: Convert / Edit / Tags / Audiobook"), "Ctrl+1 … Ctrl+4"), (tr("Zoom"), tr("Mouse wheel")),
+                 (tr("Scroll"), tr("Shift + wheel, or middle-drag")), (tr("Vertical zoom"), tr("Ctrl + wheel")),
+                 (tr("Move the cursor"), tr("← →  (Ctrl = 1 second)")), (tr("Extend the selection"), "Shift + ← →")]
         t = theme.current()
         html = "".join(f"<tr><td style='padding:3px 18px 3px 0'>{n}</td><td style='color:{t.accent}; font-family:Cascadia Mono'>{s}</td></tr>"
                        for n, s in sorted(rows))
         box = QMessageBox(self)
-        box.setWindowTitle("Keyboard shortcuts")
+        box.setWindowTitle(tr("Keyboard shortcuts"))
         box.setText(f"<table>{html}</table>")
         box.exec()
 
@@ -764,6 +774,13 @@ class MainWindow(QMainWindow):
         self.state.settings.set("spectrogram_fft", n)
         self.stage.invalidate()
 
+    def _set_language(self, code: str) -> None:
+        if code == self.state.settings.get("language", "auto"):
+            return
+        self.state.settings.set("language", code)
+        QMessageBox.information(self, tr("Language"),
+                                tr("The language will change the next time you start Tonewright."))
+
     def toggle_theme(self) -> None:
         new = "light" if theme.current().name == "dark" else "dark"
         self.state.settings.set("theme", new)
@@ -785,7 +802,7 @@ class MainWindow(QMainWindow):
         return Path(text) if text else None
 
     def _browse_output(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Choose the output folder", self.convert_bar.path.text() or str(Path.home()))
+        folder = QFileDialog.getExistingDirectory(self, tr("Choose the output folder"), self.convert_bar.path.text() or str(Path.home()))
         if folder:
             self.convert_bar.path.setText(folder)
             self.state.settings.set("output_dir", folder)
@@ -804,7 +821,7 @@ class MainWindow(QMainWindow):
         folder = self._out_dir() or (first.path.parent if first and first.path else Path.home())
         try:
             free = shutil.disk_usage(folder if folder.exists() else folder.anchor or str(Path.home())).free
-            space = f"Free / required space on {folder.anchor or folder}:  {format_size(free)} / {format_size(need)}"
+            space = tr(f"Free / required space on {folder.anchor or folder}:  {format_size(free)} / {format_size(need)}")
             low = free < need * 1.1
         except OSError:
             space, low = "", False
@@ -820,19 +837,19 @@ class MainWindow(QMainWindow):
             try:
                 out_dir.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
-                self.ctl.error("Output folder", f"Cannot use that folder: {exc.strerror or exc}")
+                self.ctl.error(tr("Output folder"), tr(f"Cannot use that folder: {exc.strerror or exc}"))
                 return
         opts = self.convert_panel.options(out_dir)
         citems = [i.to_convert_item() for i in items]
         if any(c.path is None and c.doc is None for c in citems):
-            self.ctl.error("Convert", "Some files have no audio to convert.")
+            self.ctl.error(tr("Convert"), tr("Some files have no audio to convert."))
             return
         need = sum(formats.estimate_size(opts.settings, c.length, c.source_sr, c.source_channels) for c in citems)
         folder = out_dir or (items[0].path.parent if items[0].path else Path.home())
         try:
             if shutil.disk_usage(folder).free < need * 1.05:
-                if QMessageBox.question(self, "Low disk space", "There may not be enough free space on the drive for the "
-                                        f"output (about {format_size(need)}). Continue anyway?") != QMessageBox.StandardButton.Yes:
+                if QMessageBox.question(self, tr("Low disk space"), tr("There may not be enough free space on the drive for the "
+                                        f"output (about {format_size(need)}). Continue anyway?")) != QMessageBox.StandardButton.Yes:
                     return
         except OSError:
             pass
@@ -852,13 +869,13 @@ class MainWindow(QMainWindow):
         job.completed.connect(self._convert_done)
         self.convert_bar.set_running(True)
         self.convert_bar.set_progress(0.0)
-        self.convert_bar.set_status("Converting…")
+        self.convert_bar.set_status(tr("Converting…"))
         job.start()
 
     def _pause_convert(self, paused: bool) -> None:
         if self._convert_job:
             (self._convert_job.pause.pause if paused else self._convert_job.pause.resume)()
-            self.convert_bar.set_status("Paused" if paused else "Converting…")
+            self.convert_bar.set_status(tr("Paused") if paused else tr("Converting…"))
 
     def _convert_item_progress(self, n: int, frac: float) -> None:
         if 0 <= n < len(self.state.items):
@@ -877,7 +894,7 @@ class MainWindow(QMainWindow):
         self.convert_bar.set_running(False)
         self._convert_job = None
         if error is not None:
-            self.convert_bar.set_status(f"Failed: {error}", "bad")
+            self.convert_bar.set_status(tr(f"Failed: {error}"), "bad")
             for it in self.state.items:
                 if it.status in ("queued", "converting"):
                     it.status = "error"
@@ -888,7 +905,7 @@ class MainWindow(QMainWindow):
                 if it.status in ("queued", "converting"):
                     it.status = "ready"
                     self.state.touched(it)
-            self.convert_bar.set_status("Cancelled", "warn")
+            self.convert_bar.set_status(tr("Cancelled"), "warn")
             self.convert_bar.reset_progress()
             return
         stopped = [r for r in results if r.status == "cancelled"]
@@ -900,29 +917,29 @@ class MainWindow(QMainWindow):
                     it.status, it.progress = "ready", 0.0
                     self.state.touched(it)
             self.convert_bar.reset_progress()
-            self.convert_bar.set_status(f"Cancelled. {len(done)} file{'s' if len(done) != 1 else ''} had already been converted.", "warn")
+            self.convert_bar.set_status(tr(f"Cancelled. {len(done)} file{'s' if len(done) != 1 else ''} had already been converted."), "warn")
             return
         skipped = [r for r in results if r.status == "skipped"]
-        self.convert_bar.set_progress(1.0, "Completed 100 %")
-        msg = f"Converted {len({r.output for r in done})} file{'s' if len({r.output for r in done}) != 1 else ''}"
+        self.convert_bar.set_progress(1.0, tr("Completed 100 %"))
+        msg = tr(f"Converted {len({r.output for r in done})} file{'s' if len({r.output for r in done}) != 1 else ''}")
         if skipped:
-            msg += f", skipped {len(skipped)}"
+            msg += tr(f", skipped {len(skipped)}")
         if failed:
-            msg += f", {len(failed)} failed: {failed[0].message}"
+            msg += tr(f", {len(failed)} failed: {failed[0].message}")
         self.convert_bar.set_status(msg, "bad" if failed else "good")
         if done:
             out = done[-1].output
-            self._flash(f"Saved to {out.parent}")
+            self._flash(tr(f"Saved to {out.parent}"))
             if not failed and QApplication.activeWindow() is self:
                 QTimer.singleShot(150, lambda: self._offer_open_folder(out.parent))
 
     def _offer_open_folder(self, folder: Path) -> None:
         box = QMessageBox(self)
-        box.setWindowTitle("Conversion finished")
-        box.setText("All files were converted.")
+        box.setWindowTitle(tr("Conversion finished"))
+        box.setText(tr("All files were converted."))
         box.setInformativeText(str(folder))
-        open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+        open_btn = box.addButton(tr("Open folder"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(tr("Close"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() is open_btn:
             import os
@@ -956,10 +973,10 @@ class MainWindow(QMainWindow):
         folder = items[0].path.parent if items[0].path else Path.home() / "Music"
         self.book_bar.path.setText(str(folder / (tagmod.sanitize_filename(title) + ".m4b")))
         n = len(items)
-        self.book_bar.set_status(f"{n} file{'s' if n != 1 else ''} in the library will be joined, in this order.")
+        self.book_bar.set_status(tr(f"{n} file{'s' if n != 1 else ''} in the library will be joined, in this order."))
 
     def _browse_book(self) -> None:
-        name, _ = QFileDialog.getSaveFileName(self, "Save audiobook", self.book_bar.path.text(), "Audiobook (*.m4b)")
+        name, _ = QFileDialog.getSaveFileName(self, tr("Save audiobook"), self.book_bar.path.text(), tr("Audiobook (*.m4b)"))
         if name:
             self._book_path_touched = True
             self.book_bar.path.setText(str(Path(name).with_suffix(".m4b")))
@@ -973,21 +990,21 @@ class MainWindow(QMainWindow):
         needs_audio = opts.pause_detection and opts.split in ("count", "time")
         try:
             if needs_audio:
-                ok, res = run_task(self, "Looking for pauses", lambda progress, cancel: audiobook.analyze_pauses(
-                    parts, opts, progress=progress, cancel=cancel), message="Listening for silences between phrases…", delay_ms=300)
+                ok, res = run_task(self, tr("Looking for pauses"), lambda progress, cancel: audiobook.analyze_pauses(
+                    parts, opts, progress=progress, cancel=cancel), message=tr("Listening for silences between phrases…"), delay_ms=300)
                 if not ok:
                     return
                 pauses, durations = res
             else:
                 pauses, durations = None, [p.item.length for p in parts]
         except Exception as exc:  # noqa: BLE001
-            self.ctl.error("Chapters", exc)
+            self.ctl.error(tr("Chapters"), exc)
             return
         chapters = audiobook.plan_chapters(durations, parts, opts, pauses)
-        note = f"{len(chapters)} chapters."
+        note = tr(f"{len(chapters)} chapters.")
         if needs_audio and pauses is not None:
-            note += f" {len(pauses)} pauses were found; chapters start at the pause nearest to each ideal split."
-        self.book_panel.set_chapters(chapters, note + " Double-click a name or time to change it.")
+            note += tr(f" {len(pauses)} pauses were found; chapters start at the pause nearest to each ideal split.")
+        self.book_panel.set_chapters(chapters, note + tr(" Double-click a name or time to change it."))
 
     def create_audiobook(self) -> None:
         if not self.state.items:
@@ -1003,7 +1020,7 @@ class MainWindow(QMainWindow):
             if not text:
                 return
         path = Path(text).with_suffix(".m4b")
-        if path.exists() and QMessageBox.question(self, "Create audiobook", f"{path.name} already exists. Replace it?") != QMessageBox.StandardButton.Yes:
+        if path.exists() and QMessageBox.question(self, tr("Create audiobook"), tr(f"{path.name} already exists. Replace it?")) != QMessageBox.StandardButton.Yes:
             return
         parts = self._parts()
         chapters = self.book_panel.chapters()
@@ -1018,29 +1035,29 @@ class MainWindow(QMainWindow):
         job.completed.connect(self._book_done)
         self.book_bar.set_running(True)
         self.book_bar.set_progress(0.0)
-        self.book_bar.set_status("Creating the audiobook…")
+        self.book_bar.set_status(tr("Creating the audiobook…"))
         job.start()
 
     def _pause_book(self, paused: bool) -> None:
         if self._book_job:
             (self._book_job.pause.pause if paused else self._book_job.pause.resume)()
-            self.book_bar.set_status("Paused" if paused else "Creating the audiobook…")
+            self.book_bar.set_status(tr("Paused") if paused else tr("Creating the audiobook…"))
 
     def _book_done(self, result, error, cancelled) -> None:
         self.book_bar.set_running(False)
         self._book_job = None
         if error is not None:
-            self.book_bar.set_status(f"Failed: {str(error).strip().splitlines()[0] if str(error).strip() else error}", "bad")
+            self.book_bar.set_status(tr(f"Failed: {str(error).strip().splitlines()[0] if str(error).strip() else error}"), "bad")
             return
         if cancelled or result is None:
-            self.book_bar.set_status("Cancelled", "warn")
+            self.book_bar.set_status(tr("Cancelled"), "warn")
             self.book_bar.reset_progress()
             return
         path, chapters = result
-        self.book_panel.set_chapters(chapters, f"{len(chapters)} chapters written to the file.")
-        self.book_bar.set_progress(1.0, "Completed 100 %")
-        self.book_bar.set_status(f"Created {path.name} with {len(chapters)} chapters.", "good")
-        self._flash(f"Audiobook saved: {path}")
+        self.book_panel.set_chapters(chapters, tr(f"{len(chapters)} chapters written to the file."))
+        self.book_bar.set_progress(1.0, tr("Completed 100 %"))
+        self.book_bar.set_status(tr(f"Created {path.name} with {len(chapters)} chapters."), "good")
+        self._flash(tr(f"Audiobook saved: {path}"))
 
     # ================================================================ window plumbing
     def dragEnterEvent(self, ev: QDragEnterEvent) -> None:
@@ -1068,7 +1085,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev: QCloseEvent) -> None:
         if (self._convert_job and self._convert_job.isRunning()) or (self._book_job and self._book_job.isRunning()):
-            if QMessageBox.question(self, "Quit", "A conversion is still running. Stop it and quit?") != QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, tr("Quit"), tr("A conversion is still running. Stop it and quit?")) != QMessageBox.StandardButton.Yes:
                 ev.ignore()
                 return
             for job in (self._convert_job, self._book_job):

@@ -20,6 +20,7 @@ work = Path(tempfile.mkdtemp(prefix="tw-shots-"))
 os.environ["APPDATA"] = str(work / "appdata")
 
 from conftest import PNG_1X1, make_audio_file  # noqa: E402
+from tonewright import i18n  # noqa: E402
 from tonewright.core import effects as fx  # noqa: E402
 from tonewright.core.settings import Favorites, Settings  # noqa: E402
 from tonewright.ui import tasks, theme  # noqa: E402
@@ -47,9 +48,14 @@ def speechy(seconds: float, f: float) -> np.ndarray:
 
 
 def main() -> None:
-    out = ROOT / "docs"
+    args = sys.argv[1:]
+    lang = args[args.index("--lang") + 1] if "--lang" in args else "en"
+    out = Path(args[args.index("--out") + 1]) if "--out" in args else ROOT / "docs"
+    suffix = "" if lang == "en" else f"-{lang}"
     out.mkdir(exist_ok=True)
     app = QApplication([])
+    i18n.set_language(lang)
+    i18n.install_qt_translations(app)
     tasks.ProgressCard.show = lambda self: None
     theme.apply_theme(app, "dark")
     files = []
@@ -68,8 +74,8 @@ def main() -> None:
     def shot(widget, name: str) -> None:
         for _ in range(5):
             app.processEvents()
-        widget.grab().save(str(out / f"{name}.png"))
-        print("wrote", out / f"{name}.png")
+        widget.grab().save(str(out / f"{name}{suffix}.png"))
+        print("wrote", out / f"{name}{suffix}.png")
 
     doc = win.ctl.doc
     doc.add_marker(SR * 5, "Intro")

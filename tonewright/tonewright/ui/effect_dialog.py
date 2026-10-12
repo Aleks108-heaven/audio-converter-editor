@@ -18,6 +18,7 @@ from . import icons
 from .editors import (CompressorCurveEditor, Editor, FadeCurveEditor, GraphicEQEditor, NoiseProfileEditor)
 from .tasks import run_task
 from .widgets import divider, make_button, role_label
+from ..i18n import tr
 
 
 @dataclass
@@ -49,7 +50,7 @@ class ParamControl(QWidget):
         self.label: Optional[QLabel] = None
         self.slider: Optional[QSlider] = None
         if p.kind != "bool":
-            self.label = QLabel(p.label)
+            self.label = QLabel(tr(p.label))
             self.label.setFixedWidth(150)
             self.label.setWordWrap(True)
             row.addWidget(self.label)
@@ -60,7 +61,7 @@ class ParamControl(QWidget):
             self.spin.setDecimals(p.decimals)
             self.spin.setRange(p.minimum, p.maximum)
             self.spin.setSingleStep(p.step)
-            self.spin.setSuffix(f" {p.unit}" if p.unit else "")
+            self.spin.setSuffix(f" {tr(p.unit)}" if p.unit else "")
             self.spin.setFixedWidth(118)
             self.spin.setKeyboardTracking(False)
             row.addWidget(self.slider, 1)
@@ -71,7 +72,7 @@ class ParamControl(QWidget):
             self.spin = QSpinBox()
             self.spin.setRange(int(p.minimum), int(p.maximum))
             self.spin.setSingleStep(max(1, int(p.step)))
-            self.spin.setSuffix(f" {p.unit}" if p.unit else "")
+            self.spin.setSuffix(f" {tr(p.unit)}" if p.unit else "")
             self.spin.setFixedWidth(118)
             if p.maximum - p.minimum <= 100:
                 self.slider = QSlider(Qt.Orientation.Horizontal)
@@ -85,11 +86,11 @@ class ParamControl(QWidget):
         elif p.kind == "choice":
             self.combo = QComboBox()
             for val, text in p.choices:
-                self.combo.addItem(text, val)
+                self.combo.addItem(tr(text), val)
             self.combo.currentIndexChanged.connect(lambda _=0: self.changed.emit())
             row.addWidget(self.combo, 1)
         elif p.kind == "bool":
-            self.check = QCheckBox(p.label)
+            self.check = QCheckBox(tr(p.label))
             self.check.toggled.connect(lambda _=False: self.changed.emit())
             row.addWidget(self.check, 1)
         else:
@@ -99,7 +100,7 @@ class ParamControl(QWidget):
         if p.help:
             for w in (self, self.label):
                 if w is not None:
-                    w.setToolTip(p.help)
+                    w.setToolTip(tr(p.help))
         self.set_value(value)
 
     # ---- slider <-> spin mapping
@@ -192,7 +193,7 @@ class EffectDialog(QDialog):
         super().__init__(parent)
         self.effect = effect
         self.ctx = ctx
-        self.setWindowTitle(effect.name)
+        self.setWindowTitle(tr(effect.name))
         self.setModal(True)
         self.setMinimumWidth(580)
         self.controls: dict[str, ParamControl] = {}
@@ -207,14 +208,14 @@ class EffectDialog(QDialog):
         root.setSpacing(12)
 
         head = QHBoxLayout()
-        title = QLabel(effect.name)
+        title = QLabel(tr(effect.name))
         title.setProperty("role", "title")
-        chip = role_label(effect.category.upper(), "section")
+        chip = role_label(tr(effect.category).upper(), "section")
         head.addWidget(title)
         head.addStretch(1)
         head.addWidget(chip, alignment=Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(head)
-        desc = QLabel(effect.description)
+        desc = QLabel(tr(effect.description))
         desc.setProperty("role", "description")
         desc.setWordWrap(True)
         root.addWidget(desc)
@@ -225,16 +226,16 @@ class EffectDialog(QDialog):
 
         # ---- presets
         self.presets = QComboBox()
-        self.presets.addItem(self.CUSTOM, None)
+        self.presets.addItem(tr(self.CUSTOM), None)
         for name, data in effect.presets.items():
-            self.presets.addItem(name, data)
+            self.presets.addItem(tr(name), data)
         for fav in ctx.favorites.items:
             if fav["effect"] == effect.id:
                 self.presets.addItem(f"★  {fav['name']}", fav["params"])
         if self.presets.count() > 1:
             row = QHBoxLayout()
             row.setSpacing(12)
-            lab = QLabel("Preset")
+            lab = QLabel(tr("Preset"))
             lab.setFixedWidth(150)
             row.addWidget(lab)
             row.addWidget(self.presets, 1)
@@ -272,7 +273,7 @@ class EffectDialog(QDialog):
             self.controls[p.key] = ctl
             if p.group:
                 if p.group not in groups:
-                    box = QGroupBox(p.group)
+                    box = QGroupBox(tr(p.group))
                     inner = QVBoxLayout(box)
                     inner.setSpacing(8)
                     groups[p.group] = inner
@@ -298,12 +299,12 @@ class EffectDialog(QDialog):
         crow = QHBoxLayout(self.channel_row)
         crow.setContentsMargins(0, 0, 0, 0)
         crow.setSpacing(12)
-        clab = QLabel("Apply to")
+        clab = QLabel(tr("Apply to"))
         clab.setFixedWidth(150)
         self.channel_combo = QComboBox()
-        self.channel_combo.addItem("Both channels", None)
-        self.channel_combo.addItem("Left channel only", [0])
-        self.channel_combo.addItem("Right channel only", [1])
+        self.channel_combo.addItem(tr("Both channels"), None)
+        self.channel_combo.addItem(tr("Left channel only"), [0])
+        self.channel_combo.addItem(tr("Right channel only"), [1])
         crow.addWidget(clab)
         crow.addWidget(self.channel_combo, 1)
         root.addWidget(self.channel_row)
@@ -315,19 +316,19 @@ class EffectDialog(QDialog):
         # ---- buttons
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        fav = make_button("To Favorites", "ghost", "star")
+        fav = make_button(tr("To Favorites"), "ghost", "star")
         fav.clicked.connect(self._to_favorites)
         buttons.addWidget(fav)
         buttons.addStretch(1)
-        self.bypass = QCheckBox("Bypass")
-        self.bypass.setToolTip("Preview the original sound, without the effect, to compare")
+        self.bypass = QCheckBox(tr("Bypass"))
+        self.bypass.setToolTip(tr("Preview the original sound, without the effect, to compare"))
         buttons.addWidget(self.bypass)
-        self.preview_btn = make_button("Preview", icon="play")
+        self.preview_btn = make_button(tr("Preview"), icon="play")
         self.preview_btn.clicked.connect(self._toggle_preview)
         buttons.addWidget(self.preview_btn)
-        cancel = make_button("Cancel")
+        cancel = make_button(tr("Cancel"))
         cancel.clicked.connect(self.reject)
-        self.apply_btn = make_button("Apply", "primary")
+        self.apply_btn = make_button(tr("Apply"), "primary")
         self.apply_btn.setDefault(True)
         self.apply_btn.clicked.connect(self._accept)
         buttons.addWidget(cancel)
@@ -384,8 +385,8 @@ class EffectDialog(QDialog):
                                     and self.effect.min_channels < 2)
         if not self.effect.preserves_length(vals) or self.effect.out_frames(self.ctx.frames, self.ctx.sr, vals) != self.ctx.frames:
             new = self.effect.out_frames(self.ctx.frames, self.ctx.sr, vals) / self.ctx.sr
-            self.length_label.setText(f"Length:  {format_time(self.ctx.frames / self.ctx.sr, ms=False, short=True)}"
-                                      f"   →   {format_time(new, ms=False, short=True)}")
+            self.length_label.setText(tr(f"Length:  {format_time(self.ctx.frames / self.ctx.sr, ms=False, short=True)}"
+                                      f"   →   {format_time(new, ms=False, short=True)}"))
             self.length_label.setVisible(True)
         else:
             self.length_label.setVisible(False)
@@ -394,7 +395,7 @@ class EffectDialog(QDialog):
         self.presets.blockSignals(False)
         if self._previewing:
             self._preview_stale = True
-            self.preview_btn.setText("Update preview")
+            self.preview_btn.setText(tr("Update preview"))
             self.preview_btn.setIcon(icons.icon("refresh", 16))
 
     def _preset_chosen(self, index: int) -> None:
@@ -414,11 +415,11 @@ class EffectDialog(QDialog):
         self.presets.blockSignals(False)
 
     def _to_favorites(self) -> None:
-        name, ok = QInputDialog.getText(self, "Add to Favorites", "Name for this setting:",
-                                        text=self.effect.name)
+        name, ok = QInputDialog.getText(self, tr("Add to Favorites"), tr("Name for this setting:"),
+                                        text=tr(self.effect.name))
         if ok and name.strip():
             self.ctx.favorites.add(name.strip(), self.effect.id, self.values())
-            QMessageBox.information(self, "Favorites", f"Saved “{name.strip()}”. Find it in the Favorites tab.")
+            QMessageBox.information(self, tr("Favorites"), tr(f"Saved “{name.strip()}”. Find it in the Favorites tab."))
 
     # ---- preview
     def _toggle_preview(self) -> None:
@@ -433,9 +434,9 @@ class EffectDialog(QDialog):
             return self.ctx.render_preview(self.effect, vals, bypass, channels, extra, progress, cancel)
 
         try:
-            ok, audio = run_task(self, "Preparing preview…", job, delay_ms=400)
+            ok, audio = run_task(self, tr("Preparing preview…"), job, delay_ms=400)
         except Exception as exc:  # noqa: BLE001 - shown to the user
-            QMessageBox.warning(self, self.effect.name, str(exc).strip() or repr(exc))
+            QMessageBox.warning(self, tr(self.effect.name), tr(str(exc).strip() or repr(exc)))
             self._stop_preview()
             return
         if not ok or audio is None or len(audio) == 0:
@@ -443,7 +444,7 @@ class EffectDialog(QDialog):
             return
         self.ctx.play_array(audio, self.ctx.sr)
         self._previewing, self._preview_stale = True, False
-        self.preview_btn.setText("Stop")
+        self.preview_btn.setText(tr("Stop"))
         self.preview_btn.setIcon(icons.icon("stop", 16))
         self._timer.start()
 
@@ -455,14 +456,14 @@ class EffectDialog(QDialog):
         self._timer.stop()
         self.ctx.stop_preview()
         self._previewing = self._preview_stale = False
-        self.preview_btn.setText("Preview")
+        self.preview_btn.setText(tr("Preview"))
         self.preview_btn.setIcon(icons.icon("play", 16))
 
     def _accept(self) -> None:
         if self.ctx.validate is not None:
             problem = self.ctx.validate(self.effect, self.values())
             if problem:
-                QMessageBox.warning(self, self.effect.name, problem)
+                QMessageBox.warning(self, tr(self.effect.name), tr(problem))
                 return
         self._stop_preview()
         self.accept()

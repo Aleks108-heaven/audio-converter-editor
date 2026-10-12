@@ -11,6 +11,7 @@ from .. import paths
 
 DEFAULTS: dict[str, Any] = {
     "theme": "dark",
+    "language": "auto",                 # auto = follow Windows; otherwise a code from i18n.LANGUAGES
     "output_dir": "",
     "same_folder": False,
     "recent_files": [],

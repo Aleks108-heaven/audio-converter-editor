@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields
 from typing import Optional
 
+from ..i18n import tr
+
 
 @dataclass(frozen=True)
 class FormatSpec:
@@ -177,21 +179,21 @@ def build_args(s: EncodeSettings, src_sr: int, src_channels: int) -> list[str]:
 
 
 def _channel_name(n: int) -> str:
-    return {1: "Mono", 2: "Stereo"}.get(n, f"{n} channels")
+    return {1: tr("Mono"), 2: tr("Stereo")}.get(n) or tr(f"{n} channels")
 
 
 def describe(s: EncodeSettings, src_sr: int = 44100, src_channels: int = 2) -> str:
     """One-line summary, e.g. 'MP3 · 44.1 kHz · Stereo · 192 kbps'."""
     spec = s.spec
     rate, channels = resolve(s, src_sr, src_channels)
-    parts = [spec.name.split(" (")[0], f"{rate / 1000:g} kHz", _channel_name(channels)]
+    parts = [spec.name.split(" (")[0], tr(f"{rate / 1000:g} kHz"), _channel_name(channels)]
     if spec.lossless:
-        parts.append(f"{s.bit_depth or spec.default_depth}-bit")
+        parts.append(tr(f"{s.bit_depth or spec.default_depth}-bit"))
     elif s.mode == "vbr" and spec.vbr_choices:
         label = next((c[1] for c in spec.vbr_choices if c[0] == int(s.quality)), f"quality {s.quality:g}")
-        parts.append(label.split("  ")[0])
+        parts.append(tr(label.split("  ")[0]))
     else:
-        parts.append(f"{effective_bitrate(s):g} kbps")
+        parts.append(tr(f"{effective_bitrate(s):g} kbps"))
     return " · ".join(parts)
 
 
