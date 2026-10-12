@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import numpy as np  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 work = Path(tempfile.mkdtemp(prefix="tw-shots-"))
 os.environ["APPDATA"] = str(work / "appdata")
@@ -74,6 +74,11 @@ def main() -> None:
     def shot(widget, name: str) -> None:
         for _ in range(5):
             app.processEvents()
+        if hasattr(widget, "centralWidget"):                 # the window is never shown, so lay it out by hand
+            for w in widget.centralWidget().findChildren(QWidget) + [widget.centralWidget()]:
+                if w.layout() is not None:
+                    w.layout().activate()
+            app.processEvents()
         widget.grab().save(str(out / f"{name}{suffix}.png"))
         print("wrote", out / f"{name}{suffix}.png")
 
@@ -103,9 +108,27 @@ def main() -> None:
     win.book_panel.author.setText("Various")
     win.preview_chapters()
     shot(win, "audiobook")
+    win.set_mode("multitrack")
+    mix = win.mix_page.ctl
+    mix.add_files(list(state.items))                      # one file per line, all starting at 0
+    p = mix.project
+    a, b, c = p.clips
+    p.move_clip(b.id, int(32 * SR))                       # the second song starts while the first one is still playing
+    p.set_clip(a.id, fade_out=int(8 * SR))
+    p.crossfade(b.id)
+    p.move_clip(c.id, int(12 * SR))
+    p.set_clip(c.id, gain_db=-4.0, fade_in=SR)
+    p.set_line(p.lines[2].id, volume_db=-3.0, pan=-0.35)
+    p.add_effect("pitch", fx.get("pitch").defaults(), int(24 * SR), int(52 * SR))
+    mix.canvas.select("clip", b.id)
+    mix.canvas.fit()
+    mix.canvas.set_playhead(int(34 * SR))
+    win.mix_page.board.refresh()
+    shot(win, "multitrack")
     for item in state.items:
         if item.doc is not None:
             item.doc.mark_saved()
+    mix.project.clips.clear()                              # nothing to ask about when the window closes
 
 
 if __name__ == "__main__":

@@ -6,7 +6,15 @@ audiobook maker), in one window, with its own look and its own way of working.
 
 ![Editing](docs/edit.png)
 
-## Start it
+## Install it
+
+Run **`Tonewright-Setup-1.0.0.exe`** (build it with `installer\build_installer.ps1`, see below). It installs for your
+user without an administrator prompt (or for everyone, if you choose that), adds a Start-menu entry and an optional
+Desktop icon, and has its own uninstaller. Python, the libraries and FFmpeg are all inside it, so nothing else has to
+be installed; the wizard is available in English and Ukrainian. Installing a newer version over an older one just
+upgrades it and keeps your settings.
+
+## Start it from the source folder instead
 
 Double-click **`Tonewright.bat`**. The first time it creates a private Python environment in
 this folder and installs what it needs (about a minute, needs internet once). After that it
@@ -19,9 +27,9 @@ opens straight away.
 Everything runs offline on your PC. Your files are never changed unless you press Save, and even
 then you are asked first.
 
-## The four modes
+## The five modes
 
-Switch with the tabs at the top (or `Ctrl+1` … `Ctrl+4`). They all share one **Library** list on
+Switch with the tabs at the top (or `Ctrl+1` … `Ctrl+5`). They all share one **Library** list on
 the left, so a file you edited in *Edit* is the version that gets converted in *Convert*
 (edited files show a `*`).
 
@@ -29,6 +37,7 @@ the left, so a file you edited in *Edit* is the version that gets converted in *
 | --- | --- |
 | **Convert** | Batch conversion to MP3, M4A, M4B, AAC, OGG, Opus, WMA, FLAC, WAV, AIFF, MP2 and AMR. Choose the bitrate or quality, sample rate and channels, optionally normalize, fade the ends, or join everything into one file. Convert, Pause or Stop. The waveform of the selected file is shown above the player. |
 | **Edit** | A full waveform editor: select, cut, copy, paste, delete, trim, mix-paste, markers, unlimited undo/redo, three views (Waveform, Spectral, Envelope), 33 effects, generators, recording and analysis tools. |
+| **Multitrack** | Lay several files on top of one another on separate lines, set each line's volume and panning, fade and crossfade the clips, add effects over a range, then build the whole mix into one file. See [Multitrack mixing](#multitrack-mixing). |
 | **Tags** | Title, artist, album, year, track/disc, genre, composer, comment and **cover art** for one file or many at once. Number tracks, and rename files from their tags with a live preview. |
 | **Audiobook** | Binds the library into one `.m4b` with **chapters**, tags and a cover. Chapters can be one per file, N equal parts, every X minutes (optionally snapping to pauses), or taken from markers you set in the editor. Preview and rename the chapters before creating the book. |
 
@@ -79,6 +88,33 @@ FFmpeg audio filter chain (for example `lowpass=f=3000,volume=2`).
 * **Markers:** press `M`. They show on the ruler, can be renamed and typed in, and drive audiobook chapters.
 * **Command palette:** `Ctrl+K` finds any command or effect by name.
 * **Light and dark themes** (the sun button).
+
+## Multitrack mixing
+
+![Multitrack](docs/multitrack.png)
+
+Use it for transitions between songs, voice over music, or layering sounds.
+
+* **Add files** with the toolbar button, by dragging from Explorer or from the Library, or with *Add to the
+  multitrack mix* in the Library's right-click menu. Each file lands on its own **line**, at the playhead. Lines are mixed together,
+  so clips on different lines play at the same time.
+* **Move** a clip by dragging it (also between lines). Edges snap to other clips and to the playhead
+  (switch **Snap** off to place freely). **Trim** with the clip's left and right edges.
+* **Fade** with the small handles at the top corners. A fade is an equal-power curve, so a **Crossfade**
+  between two overlapping clips keeps the loudness steady. Select a clip and press *Crossfade*.
+* **Volume and pan:** each line has a volume slider and a balance slider (double-click resets), plus
+  **Mute** and **Solo**. Drag the green line inside a clip to set that clip's own gain.
+* **Effects:** *Add effect* puts an effect span under the lines. It affects the whole mix between its
+  edges, so drag the ends to choose the range. Effects that change the length of the sound are not allowed
+  here.
+* **Split** at the playhead, **Duplicate**, **Delete**, and unlimited **Undo / Redo** (`Ctrl+Z` /
+  `Ctrl+Y`). Clips never copy audio, so these are instant.
+* **Play** renders the mix and plays it (`Space`). If the mix would clip, you are offered to lower it.
+* **Build the mix…** creates the final file. You can keep it as a document in the Library (to edit it
+  further or convert it), or save it straight away in any supported format.
+* **Projects:** save the arrangement as a small `.twmix` file and open it later. It stores where the
+  source files are, not the audio, so keep the originals in place. A project that contains a **custom
+  FFmpeg filter** asks before it runs, because a filter can read files and network addresses.
 
 ## Languages
 
@@ -142,6 +178,16 @@ tonewright/
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .venv\Scripts\python.exe -m pytest
 ```
+
+Build the installer (needs the `.venv`, FFmpeg and Inno Setup 6, see the header of the script):
+
+```
+powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
+```
+
+It stages a private Python (checked against a pinned SHA-256), the libraries pinned in `requirements.lock.txt`, the
+program and FFmpeg; smoke-tests that staged copy with its own Python (no window is shown); and only then compiles
+`installer\dist\Tonewright-Setup-<version>.exe` plus a `.sha256` file.
 
 The GUI tests never show a window and script every dialog, so they are safe to run while you work.
 `python -m tonewright --selftest out.png` starts the real app, saves a screenshot and exits.

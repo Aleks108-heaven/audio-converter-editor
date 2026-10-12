@@ -17,7 +17,7 @@ from ..core.settings import Favorites, Settings
 from .stage import ViewState
 from ..i18n import tr
 
-MODES = ("convert", "edit", "tags", "audiobook")
+MODES = ("convert", "edit", "multitrack", "tags", "audiobook")
 _ids = itertools.count(1)
 
 

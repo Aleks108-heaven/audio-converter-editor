@@ -21,7 +21,11 @@ if str(ROOT) not in sys.path:
 DOCUMENT_LABELS = ["Open", "Delete", "Paste", "Cut", "Trim to Selection", "Silence", "Add marker", "Remove marker",
                    "Rename marker", "Edit markers", "Untitled", "Original"]
 ACTION_TEXTS = ["Waveform", "Spectral", "Envelope", "Waveform view", "Spectral view", "Envelope view",
-                "Silence…", "Tone…", "Noise…", "Dial tones…", "Speech…", "B", "KB", "MB", "GB"]
+                "Silence…", "Tone…", "Noise…", "Dial tones…", "Speech…", "B", "KB", "MB", "GB",
+                # multitrack: drag labels used as undo steps, default line names
+                "Move clip", "Trim clip", "Clip volume", "Move effect", "Resize effect", "Edit", "Line {}",
+                # words that need their own wording as a document name or a short button
+                "document|Mix", "short|Mute", "menu|Mix", "mode|Edit"]
 ERROR_CALLEES = {"ItemResult", "FileExistsError", "ValueError", "RuntimeError", "AudioDeviceError", "FFmpegError",
                  "FFmpegMissing", "KeyError", "OSError"}
 
@@ -49,6 +53,10 @@ def static_keys() -> dict[str, set[str]]:
                 continue
             name = _callee(node)
             if name == "tr" and node.args:
+                text = template(node.args[0])
+                if text:
+                    keys[text].add(f"{rel}:{node.lineno}")
+            elif name == "begin_edit" and node.args:                    # undo-step labels, translated when shown
                 text = template(node.args[0])
                 if text:
                     keys[text].add(f"{rel}:{node.lineno}")

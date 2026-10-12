@@ -9,8 +9,8 @@ from typing import Callable, Optional
 from PySide6.QtCore import QByteArray, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow,
-                               QMenu, QMessageBox, QPushButton, QSplitter, QStackedWidget, QToolButton, QVBoxLayout,
-                               QWidget)
+                               QMenu, QMessageBox, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from .. import __version__, i18n
 from ..core import audiobook, formats
@@ -30,17 +30,21 @@ from .jobs import Job, JobBar
 from .library import LibraryPanel
 from .palette import Command, CommandPalette
 from .stage import Stage
-from .state import AppState, LibraryItem
+from .mix_page import MixPage
+from .state import MODES, AppState, LibraryItem
 from .tags_panel import TagsPage
 from .tasks import run_task
 from .transport import TransportBar
 from .widgets import divider, icon_button, make_button
 from ..i18n import tr
 
-MODE_INFO = [("convert", "Convert", "convert"), ("edit", "Edit", "waveform"), ("tags", "Tags", "tag"),
-             ("audiobook", "Audiobook", "book")]
-RIGHT_PAGE = {"edit": 0, "convert": 1, "audiobook": 2}
-BOTTOM_PAGE = {"edit": 0, "convert": 1, "audiobook": 2, "tags": 0}
+MODE_INFO = [("convert", "Convert", "convert"), ("edit", "Edit", "waveform"), ("multitrack", "Multitrack", "layers"),
+             ("tags", "Tags", "tag"), ("audiobook", "Audiobook", "book")]
+RIGHT_PAGE = {"edit": 0, "convert": 1, "audiobook": 2, "multitrack": 3}
+CENTER_PAGE = {"tags": 1, "multitrack": 2}
+# while the Multitrack page is showing, these editor commands act on the mix instead of the open file
+MIX_ROUTES = {"toggle_play": "toggle_play", "go_start": "go_start", "go_end": "go_end", "undo": "undo", "redo": "redo",
+              "delete": "delete_selected"}
 
 
 def enable_dark_title_bar(window: QWidget, dark: bool) -> None:
@@ -65,7 +69,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(tr("Tonewright"))
         self.setWindowIcon(icons.app_icon())
         self.setAcceptDrops(True)
-        self.resize(1480, 900)
+        self.resize(1560, 900)
         self.setMinimumSize(1240, 700)
         self._convert_job: Optional[Job] = None
         self._book_job: Optional[Job] = None
@@ -76,7 +80,7 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._wire()
         self._build_palette()
-        self.set_mode(state.settings.get("last_mode", "edit") if state.settings.get("last_mode") in ("convert", "edit", "tags", "audiobook") else "edit", initial=True)
+        self.set_mode(state.settings.get("last_mode", "edit") if state.settings.get("last_mode") in MODES else "edit", initial=True)
         self._restore_geometry()
         self.update_actions()
         self._update_title()
@@ -102,9 +106,15 @@ class MainWindow(QMainWindow):
         self.actions[key] = a
         return a
 
+    def _command(self, name: str, *args):
+        """Run a controller command, or its Multitrack counterpart while that page is showing."""
+        if self.state.mode == "multitrack" and name in MIX_ROUTES:
+            return getattr(self.mix_page.ctl, MIX_ROUTES[name])()
+        return getattr(self.ctl, name)(*args)
+
     def _build_actions(self) -> None:
         # created before the controller exists, so every slot is looked up lazily
-        c = lambda name: (lambda *a: getattr(self.ctl, name)(*a))
+        c = lambda name: (lambda *a: self._command(name, *a))
         act = self._act
         S = QKeySequence
         act("new", "New…", c("new_document"), "Ctrl+N", "file-new", "New empty file")
@@ -217,8 +227,10 @@ class MainWindow(QMainWindow):
         hl.addWidget(name)
         self.menu_bar = self.menuBar()
         self.menu_bar.setNativeMenuBar(False)
-        hl.addWidget(self.menu_bar)
-        hl.addStretch(1)
+        # the menus take whatever room the five tabs leave; a menu bar that is too narrow shows a "»" overflow button
+        self.menu_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.menu_bar.setMinimumWidth(60)
+        hl.addWidget(self.menu_bar, 1)
         self.mode_group = QButtonGroup(self)
         self.mode_buttons: dict[str, QToolButton] = {}
         for key, text, ic in MODE_INFO:
@@ -234,12 +246,12 @@ class MainWindow(QMainWindow):
             self.mode_group.addButton(b)
             self.mode_buttons[key] = b
             hl.addWidget(b)
-        hl.addStretch(1)
-        self.palette_btn = QPushButton(tr("  Search commands"))
+        hl.addSpacing(10)
+        self.palette_btn = QPushButton("")
         self.palette_btn.setProperty("variant", "ghost")
         icons.bind(self.palette_btn, "search", 16)
-        self.palette_btn.setToolTip(tr("Ctrl+K"))
-        self.palette_btn.setMinimumWidth(170)
+        self.palette_btn.setToolTip(tr("Search every command  (Ctrl+K)"))
+        self.palette_btn.setFixedWidth(40)
         self.palette_btn.clicked.connect(lambda: self.palette.open_palette())
         hl.addWidget(self.palette_btn)
         self.theme_btn = icon_button("sun", tr("Switch theme"))
@@ -326,11 +338,14 @@ class MainWindow(QMainWindow):
         sl.addWidget(self.transport)
         self.center_stack.addWidget(stage_page)
         self.center_stack.addWidget(self.tags_page)
+        self.mix_page = MixPage(self, st, self.ctl)
+        self.center_stack.addWidget(self.mix_page)
 
         self.right_stack = QStackedWidget()
         self.right_stack.addWidget(self.edit_panel)
         self.right_stack.addWidget(self.convert_panel)
         self.right_stack.addWidget(self.book_panel)
+        self.right_stack.addWidget(self.mix_page.inspector)
         right_wrap = QWidget()
         right_wrap.setProperty("panel", True)
         rl = QVBoxLayout(right_wrap)
@@ -442,7 +457,7 @@ class MainWindow(QMainWindow):
         for key in ("analyze", "spectrum", "silence_tools", "convert_format"):
             tools.addAction(a[key])
 
-        mix = mb.addMenu(tr("Mix"))
+        mix = mb.addMenu(tr("Mix", "menu"))
         for key in ("mix_paste", "mix_file", "insert_file"):
             mix.addAction(a[key])
 
@@ -474,6 +489,11 @@ class MainWindow(QMainWindow):
         self.library.filesDropped.connect(lambda paths: ctl.open_paths(paths))
         self.library.editRequested.connect(lambda item: (st.set_current(item), self.set_mode("edit")))
         self.library.showInFolder.connect(ctl.show_in_folder)
+        self.library.addToMixRequested.connect(self._add_to_mix)
+        mix = self.mix_page.ctl
+        mix.message.connect(self._flash)
+        mix.refreshed.connect(self.update_actions)
+        mix.playStateChanged.connect(self.update_actions)
         self.library.selectionChanged.connect(self.tags_page.set_items)
         self.tags_page.renamed.connect(self.library.refresh)
         st.currentChanged.connect(self._current_changed)
@@ -548,7 +568,11 @@ class MainWindow(QMainWindow):
         self.state.settings.set("last_mode", mode)
         for k, b in self.mode_buttons.items():
             b.setChecked(k == mode)
-        self.center_stack.setCurrentIndex(1 if mode == "tags" else 0)
+        self.center_stack.setCurrentIndex(CENTER_PAGE.get(mode, 0))
+        if mode == "multitrack":
+            self.ctl.stop_playback()
+        else:
+            self.mix_page.ctl.stop()
         self.right_wrap.setVisible(mode != "tags")
         if mode in RIGHT_PAGE:
             self.right_stack.setCurrentIndex(RIGHT_PAGE[mode])
@@ -631,6 +655,17 @@ class MainWindow(QMainWindow):
         a["play"].setText(tr("Pause") if playing else tr("Play"))
         self.env_apply.setVisible(env and editing)
         self.env_reset.setVisible(env and editing)
+        if mode == "multitrack":
+            mix = self.mix_page.ctl
+            pr = mix.project
+            for key in ("play", "stop", "go_start", "go_end"):
+                a[key].setEnabled(not pr.empty)
+            a["undo"].setEnabled(pr.can_undo)
+            a["redo"].setEnabled(pr.can_redo)
+            a["delete"].setEnabled(mix.canvas.selected is not None)
+            mix_playing = mix.player.state == "playing" and not mix._preview_active
+            a["play"].setIcon(icons.icon("pause" if mix_playing else "play", 22, color=t.accent_fg))
+            a["play"].setText(tr("Pause") if mix_playing else tr("Play"))
         self.undo_btn.setEnabled(a["undo"].isEnabled())
         self.redo_btn.setEnabled(a["redo"].isEnabled())
         self.status_right.setText(self._status_right())
@@ -734,7 +769,7 @@ class MainWindow(QMainWindow):
     def _show_shortcuts(self) -> None:
         rows = [(a.text().replace("&", "").rstrip("…"), a.shortcut().toString()) for k, a in self.actions.items()
                 if not a.shortcut().isEmpty() and not k.startswith("mode_")]
-        rows += [(tr("Mode: Convert / Edit / Tags / Audiobook"), "Ctrl+1 … Ctrl+4"), (tr("Zoom"), tr("Mouse wheel")),
+        rows += [(tr("Mode: Convert / Edit / Multitrack / Tags / Audiobook"), "Ctrl+1 … Ctrl+5"), (tr("Zoom"), tr("Mouse wheel")),
                  (tr("Scroll"), tr("Shift + wheel, or middle-drag")), (tr("Vertical zoom"), tr("Ctrl + wheel")),
                  (tr("Move the cursor"), tr("← →  (Ctrl = 1 second)")), (tr("Extend the selection"), "Shift + ← →")]
         t = theme.current()
@@ -745,9 +780,15 @@ class MainWindow(QMainWindow):
         box.setText(f"<table>{html}</table>")
         box.exec()
 
+    def _add_to_mix(self, items: list) -> None:
+        self.set_mode("multitrack")
+        self.mix_page.ctl.add_files(items)
+
     # ================================================================ view toggles
     def _escape(self) -> None:
-        if self.ctl.player.state != "stopped" or self.ctl._preview_active:
+        if self.state.mode == "multitrack":
+            self.mix_page.ctl.stop()
+        elif self.ctl.player.state != "stopped" or self.ctl._preview_active:
             self.ctl.stop_playback()
         else:
             self.stage.clear_selection()
@@ -790,6 +831,7 @@ class MainWindow(QMainWindow):
         self.toolbar.setStyleSheet(f"#toolbar {{ background: {t.bg0}; border-bottom: 1px solid {t.line}; }}")
         icons.refresh_all()
         self.edit_panel.effects._fill()
+        self.mix_page.restyle()
         self.stage.invalidate()
         enable_dark_title_bar(self, new == "dark")
         self.update_actions()
@@ -1096,7 +1138,11 @@ class MainWindow(QMainWindow):
         if not self.ctl.confirm_quit():
             ev.ignore()
             return
+        if not self.mix_page.ctl.confirm_quit():
+            ev.ignore()
+            return
         self.ctl.stop_playback()
+        self.mix_page.ctl.stop()
         self.state.settings.set("window", {"geometry": base64.b64encode(bytes(self.saveGeometry())).decode("ascii"),
                                            "sizes": self.splitter.sizes()})
         ev.accept()

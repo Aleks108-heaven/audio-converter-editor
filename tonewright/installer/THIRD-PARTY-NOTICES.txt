@@ -1,0 +1,27 @@
+Tonewright - third-party components
+===================================
+
+Tonewright is a personal project. The installer bundles the following software so that nothing else has to be
+installed. Each component keeps its own licence; the full texts that ship with them are in the "licenses" folder
+and in the *.dist-info folders under "site-packages".
+
+Python 3.15 runtime (embeddable distribution)    PSF License            https://www.python.org/
+    licenses\Python-LICENSE.txt
+
+Qt 6 and PySide6 (Core, Gui, Widgets, Svg)       LGPL-3.0               https://www.qt.io/  https://pypi.org/project/PySide6-Essentials/
+    Used as dynamically loaded libraries that you may replace with your own build of the same version.
+    Qt's source code and licence texts are available from the sites above.
+
+NumPy                                            BSD-3-Clause           https://numpy.org/
+mutagen                                          GPL-2.0-or-later       https://github.com/quodlibet/mutagen
+sounddevice (and the bundled PortAudio)          MIT                    https://python-sounddevice.readthedocs.io/
+cffi, pycparser                                  MIT / BSD-3-Clause     https://cffi.readthedocs.io/
+
+FFmpeg (ffmpeg.exe, ffprobe.exe), "full" Windows build by gyan.dev
+                                                 GPL-3.0-or-later       https://ffmpeg.org/  https://www.gyan.dev/ffmpeg/builds/
+    licenses\FFmpeg-LICENSE.txt, licenses\FFmpeg-build-README.txt
+    FFmpeg is run as a separate program. Its source code and the build configuration are available from the sites
+    above. If you pass this installer on to other people, the GPL terms of FFmpeg and mutagen apply to what you
+    pass on.
+
+Fonts: the interface uses the fonts already installed with Windows (Segoe UI, Cascadia Mono); none are bundled.

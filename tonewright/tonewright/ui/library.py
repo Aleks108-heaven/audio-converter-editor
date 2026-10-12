@@ -121,6 +121,7 @@ class LibraryPanel(QFrame):
     filesDropped = Signal(list)
     editRequested = Signal(object)
     showInFolder = Signal(object)
+    addToMixRequested = Signal(list)
     selectionChanged = Signal(list)
 
     def __init__(self, state: AppState, parent: Optional[QWidget] = None) -> None:
@@ -309,6 +310,8 @@ class LibraryPanel(QFrame):
             return
         menu = QMenu(self)
         menu.addAction(icons.icon("waveform"), tr("Open in editor"), lambda: self.editRequested.emit(item))
+        menu.addAction(icons.icon("layers"), tr("Add to the multitrack mix"),
+                       lambda: self.addToMixRequested.emit(self.selected_items() or [item]))
         if item.path:
             menu.addAction(icons.icon("folder"), tr("Show in folder"), lambda: self.showInFolder.emit(item))
         menu.addSeparator()

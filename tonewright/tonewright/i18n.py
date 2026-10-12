@@ -139,7 +139,7 @@ def tr(text, context: str = ""):
     """Translate `text` into the current language (non-strings and empty text pass through untouched).
 
     `context` picks between translations of the same English word that need different wording, e.g.
-    ``tr("Convert", "mode")`` (a tab: "Конвертація") versus ``tr("Convert")`` (a button: "Конвертувати")."""
+    ``tr("Convert", "mode")`` (a tab: "Конвертер") versus ``tr("Convert")`` (a button: "Конвертувати")."""
     if _language == DEFAULT_LANGUAGE or not isinstance(text, str) or not text:
         return text
     if _language == PSEUDO:

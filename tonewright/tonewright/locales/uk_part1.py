@@ -171,7 +171,7 @@ MESSAGES = {
     "Constant bitrate": "Постійний бітрейт",
     "Conversion finished": "Конвертацію завершено",
     "Convert": "Конвертувати",
-    "mode|Convert": "Конвертація",
+    "mode|Convert": "Конвертер",
     "Convert file format": "Перетворення формату файлу",
     "Convert file format…": "Перетворити формат файлу…",
     "Convert format": "Перетворення формату",

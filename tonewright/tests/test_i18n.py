@@ -61,8 +61,9 @@ def test_english_is_a_no_op():
 def test_exact_template_and_context_lookups():
     i18n.set_language("uk")
     assert i18n.tr("Save") == "Зберегти"
-    assert i18n.tr("Convert") == "Конвертувати" and i18n.tr("Convert", "mode") == "Конвертація"
-    assert i18n.tr("Edit", "mode") == "Редагування"                       # no special entry: falls back to the plain one
+    assert i18n.tr("Convert") == "Конвертувати" and i18n.tr("Convert", "mode") == "Конвертер"
+    assert i18n.tr("Edit", "mode") == "Редактор" and i18n.tr("Edit") == "Редагування"
+    assert i18n.tr("Tags", "mode") == "Теги"                              # no special entry: falls back to the plain one
     assert i18n.tr("Applied Reverb") == "Застосовано: Reverb"             # template; the inserted text is kept as is
     assert i18n.tr("This text has no translation") == "This text has no translation"
     assert i18n.tr("44100 Hz") == "44100 Гц" and i18n.tr("16k Hz") == "16 кГц"
@@ -235,12 +236,22 @@ def _walk_interface(win, qapp, tmp_path, titles) -> dict[str, set[str]]:
         for text, where in found.items():
             seen.setdefault(text, set()).update(f"{label}:{w}" for w in where)
 
-    for mode in ("edit", "convert", "tags", "audiobook"):
+    for mode in ("edit", "convert", "multitrack", "tags", "audiobook"):
         win.set_mode(mode)
         if mode == "tags":
             win.library.tree.selectAll()
         if mode == "audiobook":
             win.preview_chapters()
+        if mode == "multitrack":
+            mix = win.mix_page.ctl
+            mix.add_files(list(win.state.items))
+            span = mix.project.add_effect("amplify", fx.get("amplify").defaults(), 0, 44100)
+            win.mix_page.board.refresh()
+            for selection in (("clip", mix.project.clips[0].id), ("effect", span.id), None):
+                mix.canvas.select(*(selection or (None,)))
+                pump(qapp, 30)
+                merge("multitrack", i18n_audit.collect([win, win.mix_page, win.mix_page.inspector], win.actions.values()))
+            mix.canvas.select("clip", mix.project.clips[0].id)
         pump(qapp, 30)
         merge(mode, i18n_audit.collect([win], win.actions.values()))
     win.set_mode("edit")
@@ -272,7 +283,7 @@ def test_ukrainian_interface_has_no_english_left(ukrainian, loaded, qapp, tmp_pa
 
 def test_main_window_speaks_ukrainian(ukrainian, loaded):
     win = loaded
-    assert [b.text() for b in win.mode_buttons.values()] == ["Конвертація", "Редагування", "Теги", "Аудіокнига"]
+    assert [b.text() for b in win.mode_buttons.values()] == ["Конвертер", "Редактор", "Мультитрек", "Теги", "Аудіокнига"]
     assert win.actions["save"].text() == "Зберегти" and win.actions["undo"].text() == "Скасувати"
     assert [a.text() for a in win.menu_bar.actions()][:3] == ["Файл", "Редагування", "Вигляд"]
 

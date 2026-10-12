@@ -214,7 +214,7 @@ QToolButton:disabled {{ color: {t.text_faint}; }}
 QToolButton::menu-indicator {{ image: url({a["chev_down"]}); subcontrol-origin: padding; subcontrol-position: right bottom; width: 8px; height: 8px; right: 2px; bottom: 2px; }}
 QToolButton::menu-button {{ border: none; background: transparent; width: 13px; }}
 QToolButton::menu-arrow {{ image: url({a["chev_down"]}); width: 9px; height: 8px; }}
-QToolButton[role="tab"] {{ padding: 8px 18px; border-radius: 9px; font-weight: 600; color: {t.text_dim}; }}
+QToolButton[role="tab"] {{ padding: 8px 12px; border-radius: 9px; font-weight: 600; color: {t.text_dim}; }}
 QToolButton[role="tab"]:hover {{ background: {t.bg3}; color: {t.text}; }}
 QToolButton[role="tab"]:checked {{ background: {t.accent}; color: {t.accent_fg}; }}
 QToolButton[role="play"] {{ background: {t.accent}; color: {t.accent_fg}; border-radius: 22px; padding: 0px; }}
@@ -286,7 +286,7 @@ QSplitter::handle:vertical {{ height: 1px; }}
 QSplitter::handle:hover {{ background: {t.accent}; }}
 
 QMenuBar {{ background: transparent; padding: 0; spacing: 2px; }}
-QMenuBar::item {{ background: transparent; padding: 6px 11px; border-radius: 6px; color: {t.text_dim}; }}
+QMenuBar::item {{ background: transparent; padding: 6px 9px; border-radius: 6px; color: {t.text_dim}; }}
 QMenuBar::item:selected {{ background: {t.bg3}; color: {t.text}; }}
 QMenu {{ background: {t.bg2}; border: 1px solid {t.line_strong}; border-radius: 10px; padding: 6px; }}
 QMenu::item {{ padding: 7px 28px 7px 12px; border-radius: 6px; min-width: 150px; }}

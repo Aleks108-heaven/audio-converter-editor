@@ -205,7 +205,6 @@ MESSAGES = {
     "Mixing the audio…": "Мікшування аудіо…",
     "Mobile voice recordings; always 8 kHz mono.": "Мобільні голосові записи; завжди 8 кГц, моно.",
     "Mode": "Режим",
-    "Mode: Convert / Edit / Tags / Audiobook": "Режим: Конвертація / Редагування / Теги / Аудіокнига",
     "Modulation": "Модуляція",
     "Mono": "Моно",
     "Mono (smaller file)": "Моно (менший файл)",
