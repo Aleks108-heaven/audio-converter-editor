@@ -1,0 +1,26 @@
+Tonewright - third-party components (macOS app)
+===============================================
+
+Tonewright is a personal project. The app bundles the following software so that nothing else has to be installed.
+Each component keeps its own licence.
+
+Python runtime (packed by PyInstaller)           PSF License            https://www.python.org/
+PyInstaller bootloader                           GPL-2.0 with the bootloader exception   https://pyinstaller.org/
+
+Qt 6 and PySide6 (Core, Gui, Widgets, Svg)       LGPL-3.0               https://www.qt.io/  https://pypi.org/project/PySide6-Essentials/
+    Used as dynamically loaded libraries that you may replace with your own build of the same version.
+    Qt's source code and licence texts are available from the sites above.
+
+NumPy                                            BSD-3-Clause           https://numpy.org/
+mutagen                                          GPL-2.0-or-later       https://github.com/quodlibet/mutagen
+sounddevice (and the bundled PortAudio)          MIT                    https://python-sounddevice.readthedocs.io/
+cffi, pycparser                                  MIT / BSD-3-Clause     https://cffi.readthedocs.io/
+
+FFmpeg 9.0.2 (ffmpeg, ffprobe), static Apple Silicon build by Martin Riedl
+                                                 GPL-3.0-or-later       https://ffmpeg.org/  https://ffmpeg.martin-riedl.de/
+    FFmpeg is run as a separate program. This build is configured with --enable-gpl --enable-version3 (run
+    "ffmpeg -version" for the full list), and its build script is published at
+    https://git.martin-riedl.de/ffmpeg/build-script. If you pass this app on to other people, the GPL terms of
+    FFmpeg and mutagen apply to what you pass on.
+
+Fonts: the interface uses the fonts already installed with macOS (Helvetica Neue, Menlo); none are bundled.

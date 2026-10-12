@@ -1,26 +1,48 @@
 # Tonewright
 
-A personal audio converter and editor for Windows. It does the same jobs as the two programs in
-the photos (a waveform editor with effects, a batch converter with a tag editor, and an
+A personal audio converter and editor for Windows and for Macs with Apple Silicon (M1 and newer). It does the same jobs
+as the two programs in the photos (a waveform editor with effects, a batch converter with a tag editor, and an
 audiobook maker), in one window, with its own look and its own way of working.
 
 ![Editing](docs/edit.png)
 
 ## Install it
 
-Run **`Tonewright-Setup-1.0.0.exe`** (build it with `installer\build_installer.ps1`, see below). It installs for your
-user without an administrator prompt (or for everyone, if you choose that), adds a Start-menu entry and an optional
-Desktop icon, and has its own uninstaller. Python, the libraries and FFmpeg are all inside it, so nothing else has to
-be installed; the wizard is available in English and Ukrainian. Installing a newer version over an older one just
-upgrades it and keeps your settings.
+Run **`Tonewright-Setup-1.0.0.exe`** (build it with `installer\build_installer.ps1`, see below). It installs into
+`C:\Program Files\Tonewright` (Windows asks for administrator approval once), so only an administrator can change the
+program files. Your settings, favourites and log stay in `%APPDATA%\Tonewright`, because Program Files is read-only for
+normal use. It adds a Start-menu entry and an optional Desktop icon, and has its own uninstaller. If you installed an
+earlier per-user copy, remove it in Settings > Apps after this one is in. Python, the libraries and FFmpeg are all
+inside it, so nothing else has to be installed; the wizard is available in English and Ukrainian. Installing a newer
+version over an older one just upgrades it and keeps your settings.
+
+### On a Mac (M1 and newer)
+
+The app is built by GitHub: open the repository's **Actions** tab, pick the latest **macOS** run and download the
+**tonewright-macos-arm64** artifact. It holds `Tonewright-1.0.0-arm64.dmg` and `SHA256SUMS.txt` (check the file against
+it with `shasum -a 256`). Open the `.dmg` and drag **Tonewright** onto **Applications**. FFmpeg is inside the app.
+
+* **Opening it the first time.** The app is signed ad hoc, which is what Apple Silicon needs to run it at all, but it is
+  not notarised by Apple (that needs a paid developer account), so macOS says it cannot verify it. Control-click the app,
+  choose **Open**, then **Open** again; on recent macOS versions use **System Settings > Privacy & Security > Open
+  Anyway**. Or run `xattr -dr com.apple.quarantine /Applications/Tonewright.app` once.
+* **Settings** live in `~/Library/Application Support/Tonewright`.
+* **Shortcuts:** wherever this guide says `Ctrl`, use **⌘ Command** on a Mac.
+* **Microphone:** Record asks for permission the first time.
+* **Speech** (Generate) uses the voices installed in *System Settings > Accessibility > Spoken Content*.
+* **Differences:** the bundled FFmpeg has no Rubber Band or AMR support, so Tempo and Pitch use FFmpeg's own filters (a
+  little lower quality on extreme settings) and the AMR formats are not offered.
+* **Build it yourself** on an Apple Silicon Mac with `macos/build_app.sh` (needs Python 3.13, `pip install -r
+  requirements.lock.txt pyinstaller`). The Mac version was written without access to a Mac; the GitHub run runs the whole
+  test suite and a start-up test of the finished app on a real one.
 
 ## Start it from the source folder instead
 
-Double-click **`Tonewright.bat`**. The first time it creates a private Python environment in
+On a Mac, run **`Tonewright.command`** (needs Python 3 and `brew install ffmpeg`). On Windows, double-click **`Tonewright.bat`**. The first time it creates a private Python environment in
 this folder and installs what it needs (about a minute, needs internet once). After that it
 opens straight away.
 
-* **FFmpeg** must be installed (`winget install Gyan.FFmpeg`). You already have it.
+* **FFmpeg** must be installed (`winget install Gyan.FFmpeg` on Windows, `brew install ffmpeg` on a Mac).
 * Want a Desktop / Start-menu icon? Run `powershell -ExecutionPolicy Bypass -File create_shortcut.ps1`.
 * You can also drag audio files onto `Tonewright.bat`, or run `python -m tonewright file1.mp3 file2.wav`.
 

@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import QByteArray, QPoint, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDragEnterEvent, QDropEvent, QKeySequence
+from PySide6.QtGui import (QAction, QActionGroup, QCloseEvent, QDragEnterEvent, QDropEvent, QGuiApplication,
+                           QKeySequence)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow,
                                QMenu, QMessageBox, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QToolButton,
                                QVBoxLayout, QWidget)
 
 from .. import __version__, i18n
+from .. import paths as app_paths
 from ..core import audiobook, formats
 from ..core import effects as fx
 from ..core import ffmpeg
@@ -62,6 +64,15 @@ def enable_dark_title_bar(window: QWidget, dark: bool) -> None:
 
 
 class MainWindow(QMainWindow):
+    @staticmethod
+    def _first_size() -> tuple[int, int]:
+        """1560 x 900, or a little less than the screen where that would not fit (a 13-inch laptop)."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is None or QGuiApplication.platformName() == "offscreen":
+            return 1560, 900
+        area = screen.availableGeometry()
+        return min(1560, int(area.width() * 0.96)), min(900, int(area.height() * 0.94))
+
     def __init__(self, state: AppState) -> None:
         super().__init__()
         self.state = state
@@ -69,7 +80,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(tr("Tonewright"))
         self.setWindowIcon(icons.app_icon())
         self.setAcceptDrops(True)
-        self.resize(1560, 900)
+        self.resize(*self._first_size())
         self.setMinimumSize(1240, 700)
         self._convert_job: Optional[Job] = None
         self._book_job: Optional[Job] = None
@@ -223,7 +234,7 @@ class MainWindow(QMainWindow):
         logo.setPixmap(icons.logo_pixmap(30))
         hl.addWidget(logo)
         name = QLabel(tr("Tonewright"))
-        name.setStyleSheet("font-size: 12.5pt; font-weight: 700; padding: 0 10px 0 6px;")
+        name.setStyleSheet(f"font-size: {theme.css_size(12.5)}; font-weight: 700; padding: 0 10px 0 6px;")
         hl.addWidget(name)
         self.menu_bar = self.menuBar()
         self.menu_bar.setNativeMenuBar(False)
@@ -431,7 +442,7 @@ class MainWindow(QMainWindow):
         lang_menu = view.addMenu(tr("Language"))
         lang_group = QActionGroup(self)
         chosen = self.state.settings.get("language", "auto")
-        for code, name in (("auto", tr("Automatic (follow Windows)")), *i18n.LANGUAGES):
+        for code, name in (("auto", tr("Automatic (follow the system)")), *i18n.LANGUAGES):
             lang_act = lang_menu.addAction(name)
             lang_act.setCheckable(True)
             lang_act.setChecked(chosen == code or (code == "auto" and chosen not in dict(i18n.LANGUAGES)))
@@ -773,7 +784,7 @@ class MainWindow(QMainWindow):
                  (tr("Scroll"), tr("Shift + wheel, or middle-drag")), (tr("Vertical zoom"), tr("Ctrl + wheel")),
                  (tr("Move the cursor"), tr("← →  (Ctrl = 1 second)")), (tr("Extend the selection"), "Shift + ← →")]
         t = theme.current()
-        html = "".join(f"<tr><td style='padding:3px 18px 3px 0'>{n}</td><td style='color:{t.accent}; font-family:Cascadia Mono'>{s}</td></tr>"
+        html = "".join(f"<tr><td style='padding:3px 18px 3px 0'>{n}</td><td style='color:{t.accent}; font-family:{theme.MONO_FONT}'>{s}</td></tr>"
                        for n, s in sorted(rows))
         box = QMessageBox(self)
         box.setWindowTitle(tr("Keyboard shortcuts"))
@@ -984,8 +995,7 @@ class MainWindow(QMainWindow):
         box.addButton(tr("Close"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() is open_btn:
-            import os
-            os.startfile(str(folder))  # type: ignore[attr-defined]
+            app_paths.open_folder(folder)
 
     # ================================================================ audiobook flow
     def _parts(self) -> list[Part]:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import os
 import re
+import sys
 from functools import lru_cache
 from typing import Callable, Optional, Union
 
@@ -44,7 +45,7 @@ def language_name(code: str) -> str:
 
 
 def system_language() -> str:
-    """The Windows display language when we have a catalogue for it, otherwise English."""
+    """The system display language when we have a catalogue for it, otherwise English."""
     names: list[str] = []
     try:
         import ctypes
@@ -53,6 +54,12 @@ def system_language() -> str:
         names.append(locale.windows_locale.get(langid, ""))
     except Exception:
         pass
+    if sys.platform != "win32":
+        try:
+            from PySide6.QtCore import QLocale
+            names += list(QLocale.system().uiLanguages())                  # macOS: the languages in System Settings, in order
+        except Exception:
+            pass
     names += [os.environ.get(v, "") for v in ("LC_ALL", "LC_MESSAGES", "LANG")]
     known = {code for code, _ in LANGUAGES}
     for name in names:

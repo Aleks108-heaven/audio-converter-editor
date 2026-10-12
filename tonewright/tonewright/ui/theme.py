@@ -1,6 +1,7 @@
 """Design tokens and the Qt stylesheet built from them (dark and light)."""
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -63,9 +64,12 @@ LIGHT = Theme(
 THEMES = {"dark": DARK, "light": LIGHT}
 _current = DARK
 
-UI_FONT = "Segoe UI Variable Text"
-UI_FONT_FALLBACK = "Segoe UI"
-MONO_FONT = "Cascadia Mono"
+if sys.platform == "darwin":
+    UI_FONT, UI_FONT_FALLBACK, MONO_FONT = "Helvetica Neue", "Arial", "Menlo"
+    PT_TO_PX = 96 / 72          # Qt counts a point as one pixel on a Mac, so sizes are given in pixels there
+else:
+    UI_FONT, UI_FONT_FALLBACK, MONO_FONT = "Segoe UI Variable Text", "Segoe UI", "Cascadia Mono"
+    PT_TO_PX = 0.0
 
 
 def current() -> Theme:
@@ -80,10 +84,24 @@ def qcolor(value: str) -> QColor:
     return QColor(value)
 
 
+def css_size(point_size: float) -> str:
+    """A font-size for a style sheet that looks the same on every platform (see PT_TO_PX)."""
+    return f"{round(point_size * PT_TO_PX, 1):g}px" if PT_TO_PX else f"{point_size:g}pt"
+
+
+def set_text_size(font: QFont, point_size: float) -> QFont:
+    """Give a font the same on-screen size on every platform (see PT_TO_PX)."""
+    if PT_TO_PX:
+        font.setPixelSize(max(1, round(point_size * PT_TO_PX)))
+    else:
+        font.setPointSizeF(point_size)
+    return font
+
+
 def ui_font(point_size: float = 10.0, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
     f = QFont(UI_FONT)
     f.setFamilies([UI_FONT, UI_FONT_FALLBACK, "Arial"])
-    f.setPointSizeF(point_size)
+    set_text_size(f, point_size)
     f.setWeight(weight)
     return f
 
@@ -92,7 +110,7 @@ def mono_font(point_size: float = 10.0, weight: QFont.Weight = QFont.Weight.Norm
     f = QFont(MONO_FONT)
     f.setFamilies([MONO_FONT, "Consolas", "Courier New"])
     f.setStyleHint(QFont.StyleHint.Monospace)
-    f.setPointSizeF(point_size)
+    set_text_size(f, point_size)
     f.setWeight(weight)
     return f
 
@@ -175,9 +193,9 @@ QToolTip {{ background: {t.bg3}; color: {t.text}; border: 1px solid {t.line_stro
 
 QLabel[role="faint"] {{ color: {t.text_faint}; }}
 QLabel[role="dim"] {{ color: {t.text_dim}; }}
-QLabel[role="section"] {{ color: {t.text_faint}; font-size: 8pt; font-weight: 600; letter-spacing: 1.2px; }}
-QLabel[role="title"] {{ font-size: 15pt; font-weight: 600; }}
-QLabel[role="h2"] {{ font-size: 11pt; font-weight: 600; }}
+QLabel[role="section"] {{ color: {t.text_faint}; font-size: {css_size(8)}; font-weight: 600; letter-spacing: 1.2px; }}
+QLabel[role="title"] {{ font-size: {css_size(15)}; font-weight: 600; }}
+QLabel[role="h2"] {{ font-size: {css_size(11)}; font-weight: 600; }}
 QLabel[role="good"] {{ color: {t.good}; }}
 QLabel[role="bad"] {{ color: {t.bad}; }}
 QLabel[role="warn"] {{ color: {t.warn}; }}
@@ -312,7 +330,7 @@ QTreeView::branch, QTreeView::branch:selected, QTreeView::branch:hover, QTreeVie
 QTreeView::branch:has-children:closed {{ image: url({a["chev_right"]}); }}
 QTreeView::branch:has-children:open {{ image: url({a["chev_down_tree"]}); }}
 QHeaderView {{ background: transparent; border: none; }}
-QHeaderView::section {{ background: transparent; color: {t.text_faint}; border: none; border-bottom: 1px solid {t.line}; padding: 6px 8px; font-size: 8pt; font-weight: 600; }}
+QHeaderView::section {{ background: transparent; color: {t.text_faint}; border: none; border-bottom: 1px solid {t.line}; padding: 6px 8px; font-size: {css_size(8)}; font-weight: 600; }}
 QTableWidget {{ gridline-color: {t.line}; }}
 QTableWidget::item {{ padding: 4px 6px; }}
 QTableWidget QLineEdit {{ padding: 2px 4px; border-radius: 3px; }}

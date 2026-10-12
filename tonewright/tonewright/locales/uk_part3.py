@@ -236,8 +236,8 @@ MESSAGES = {
     "Speech": "Мовлення",
     "Speech (RMS -20 dB)": "Мовлення (RMS -20 дБ)",
     "Speech clarity": "Чіткість мовлення",
-    "Speech generation needs the voices that come with Windows.":
-        "Для створення мовлення потрібні голоси, що постачаються з Windows.",
+    "Speech generation needs the voices that come with your computer.":
+        "Для створення мовлення потрібні голоси, що постачаються з вашим комп’ютером.",
     "Speed": "Швидкість",
     "Speeds the audio up or slows it down. In tempo mode the pitch stays where it is; in speed mode the pitch moves with the speed, like a tape.":
         "Прискорює або сповільнює звук. У режимі темпу висота тону не змінюється; у режимі швидкості висота тону змінюється разом зі швидкістю, як на стрічці.",

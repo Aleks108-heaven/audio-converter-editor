@@ -51,7 +51,7 @@ class EffectsTab(QWidget):
             head = QListWidgetItem(tr(category).upper())
             head.setFlags(Qt.ItemFlag.NoItemFlags)
             f = head.font()
-            f.setPointSizeF(8)
+            theme.set_text_size(f, 8)
             f.setBold(True)
             head.setFont(f)
             head.setForeground(theme.qcolor(theme.current().text_faint))

@@ -753,7 +753,7 @@ class ResetSlider(QSlider):
 def _toggle_style(checked_bg: str) -> str:
     t = theme.current()
     return (f"QPushButton {{ padding: 2px 8px; border-radius: 4px; background: {t.bg3}; color: {t.text}; "
-            f"border: 1px solid {t.line_strong}; font-size: 8.5pt; }}"
+            f"border: 1px solid {t.line_strong}; font-size: {theme.css_size(8.5)}; }}"
             f"QPushButton:checked {{ background: {checked_bg}; color: {t.accent_fg}; border-color: {checked_bg}; }}"
             f"QPushButton:hover {{ border-color: {t.accent}; }}")
 

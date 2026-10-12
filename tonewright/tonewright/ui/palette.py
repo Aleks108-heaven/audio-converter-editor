@@ -79,7 +79,7 @@ class CommandPalette(QDialog):
         lay.setSpacing(6)
         self.search = QLineEdit()
         self.search.setPlaceholderText(tr("Type a command or effect…"))
-        self.search.setStyleSheet("QLineEdit { font-size: 12pt; padding: 10px 12px; border: none; background: transparent; }")
+        self.search.setStyleSheet("QLineEdit { font-size: %s; padding: 10px 12px; border: none; background: transparent; }" % theme.css_size(12))
         lay.addWidget(self.search)
         self.list = QListWidget()
         self.list.setItemDelegate(_Delegate(self.list))

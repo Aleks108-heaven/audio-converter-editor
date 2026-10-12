@@ -11,6 +11,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 from collections import deque
 from dataclasses import dataclass, field
@@ -61,6 +62,9 @@ def _candidate_paths(name: str) -> list[str]:
     if env_dir:
         out.append(os.path.join(env_dir, exe))
     out.append(str(Path(__file__).resolve().parents[2] / "bin" / exe))   # the copy shipped with the installer wins
+    bundle = getattr(sys, "_MEIPASS", None)                              # inside a packaged macOS app
+    if bundle:
+        out.append(os.path.join(bundle, "bin", exe))
     which = shutil.which(name)
     if which and not _in_cwd(which):
         out.append(which)
@@ -74,7 +78,19 @@ def _candidate_paths(name: str) -> list[str]:
                 out.append(str(hit))
         out += [os.path.join(home, "scoop", "shims", exe), rf"C:\ffmpeg\bin\{exe}",
                 rf"C:\Program Files\ffmpeg\bin\{exe}", rf"C:\ProgramData\chocolatey\bin\{exe}"]
+    elif sys.platform == "darwin":
+        # an app started from Finder does not get the shell's PATH, so Homebrew and MacPorts are named outright
+        out += [f"/opt/homebrew/bin/{exe}", f"/usr/local/bin/{exe}", f"/opt/local/bin/{exe}"]
     return out
+
+
+def install_hint() -> str:
+    """The command that installs FFmpeg on this system."""
+    if sys.platform == "win32":
+        return "winget install Gyan.FFmpeg"
+    if sys.platform == "darwin":
+        return "brew install ffmpeg"
+    return "sudo apt install ffmpeg"
 
 
 def find_tool(name: str) -> str:
@@ -85,8 +101,7 @@ def find_tool(name: str) -> str:
         if cand and os.path.isfile(cand):
             _found[name] = cand
             return cand
-    raise FFmpegMissing(
-        f"{name} was not found. Install FFmpeg (winget install Gyan.FFmpeg) and restart Tonewright.")
+    raise FFmpegMissing(f"{name} was not found. Install FFmpeg ({install_hint()}) and restart Tonewright.")
 
 
 def available() -> bool:

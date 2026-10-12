@@ -1,0 +1,73 @@
+name: macOS
+
+# Tests the program on an Apple Silicon Mac and builds Tonewright.app inside a .dmg.
+# The .dmg is ad-hoc signed, not notarised: see "Opening it on a Mac" in tonewright/README.md.
+on:
+  push:
+    branches: [master]
+    paths: ["tonewright/**", ".github/workflows/macos.yml"]
+  pull_request:
+    paths: ["tonewright/**", ".github/workflows/macos.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tonewright
+
+jobs:
+  test:
+    name: Tests (Apple Silicon)
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: FFmpeg for the tests
+        run: brew install ffmpeg
+      - name: Libraries (the exact versions in requirements.lock.txt)
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.lock.txt pytest
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: .venv/bin/python -m pytest -p no:cacheprovider --tb=short -rfE
+
+  app:
+    name: Build Tonewright.app and .dmg
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Libraries
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.lock.txt "pyinstaller>=6.10,<7"
+      - name: Build, sign (ad hoc) and test the app
+        run: |
+          source .venv/bin/activate
+          bash macos/build_app.sh
+      - name: Checksum
+        run: shasum -a 256 macos/dist/*.dmg | tee macos/dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tonewright-macos-arm64
+          path: |
+            tonewright/macos/dist/*.dmg
+            tonewright/macos/dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30

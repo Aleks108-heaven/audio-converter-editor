@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -146,13 +147,37 @@ _PS = [paths.powershell_exe(), "-NoProfile", "-NonInteractive", "-Command"]   # 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+_SAY = "/usr/bin/say"        # macOS speech; always the system copy, never one found by name
+
+
 def speech_available() -> bool:
-    return os.name == "nt"
+    return os.name == "nt" or (paths.IS_MAC and os.path.isfile(_SAY))
+
+
+def parse_say_voices(listing: str) -> list[str]:
+    """Voice names from `say -v ?`: lines like 'Eddy (English (US))   en_US    # Hello, my name is Eddy.'"""
+    voices = []
+    for line in listing.splitlines():
+        m = re.match(r"^(.+?)\s+[A-Za-z]{2,3}[_-][A-Za-z0-9]+\s+#", line)
+        if m:
+            voices.append(m.group(1).strip())
+    return voices
+
+
+def say_rate(rate: int) -> int:
+    """Map the -10..10 speed slider to words per minute (0 is the usual 175)."""
+    return max(60, min(500, round(175 * 1.12 ** int(rate))))
 
 
 def list_voices() -> list[str]:
     if not speech_available():
         return []
+    if paths.IS_MAC:
+        try:
+            res = subprocess.run([_SAY, "-v", "?"], capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return parse_say_voices(res.stdout.decode("utf-8", "replace"))
     script = ("Add-Type -AssemblyName System.Speech; "
               "(New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() | "
               "ForEach-Object { $_.VoiceInfo.Name }")
@@ -165,11 +190,13 @@ def list_voices() -> list[str]:
 
 def synthesize_speech(text: str, voice: str = "", rate: int = 0, volume: int = 100, *,
                       cancel: Optional[CancelToken] = None) -> Source:
-    """Speak `text` with an installed Windows voice (rate -10..10, volume 0..100)."""
+    """Speak `text` with a voice installed on this computer (rate -10..10, volume 0..100)."""
     if not speech_available():
-        raise RuntimeError("Speech generation needs the voices that come with Windows.")
+        raise RuntimeError("Speech generation needs the voices that come with your computer.")
     if not text.strip():
         raise ValueError("Type some text to speak.")
+    if paths.IS_MAC:
+        return _synthesize_with_say(text, voice, rate, volume, cancel)
     script = (
         "Add-Type -AssemblyName System.Speech; "
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
@@ -187,8 +214,26 @@ def synthesize_speech(text: str, voice: str = "", rate: int = 0, volume: int = 1
         if cancel is not None:
             cancel.check()
         if proc.returncode != 0 or not wav_file.exists():
-            raise RuntimeError("The Windows speech engine failed: "
+            raise RuntimeError("The speech engine failed: "
                                + proc.stderr.decode("utf-8", "replace").strip()[:300])
         src = ff.decode_to_source(wav_file, cancel=cancel)
+    src.label = "speech"
+    return src
+
+
+def _synthesize_with_say(text: str, voice: str, rate: int, volume: int, cancel: Optional[CancelToken]) -> Source:
+    with tempfile.TemporaryDirectory(prefix="tw-tts-") as tmp:
+        text_file, out_file = Path(tmp) / "text.txt", Path(tmp) / "speech.aiff"
+        loudness = max(0, min(100, int(volume))) / 100
+        text_file.write_text(f"[[volm {loudness:.2f}]] {text}", encoding="utf-8")      # say has no volume option
+        cmd = [_SAY, "-r", str(say_rate(rate)), "-o", str(out_file), "-f", str(text_file)]
+        if voice:
+            cmd[1:1] = ["-v", voice]
+        proc = subprocess.run(cmd, capture_output=True, timeout=600)
+        if cancel is not None:
+            cancel.check()
+        if proc.returncode != 0 or not out_file.exists():
+            raise RuntimeError("The speech engine failed: " + proc.stderr.decode("utf-8", "replace").strip()[:300])
+        src = ff.decode_to_source(out_file, cancel=cancel)
     src.label = "speech"
     return src

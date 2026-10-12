@@ -120,6 +120,14 @@ class EncodeSettings:
         return FORMATS[self.format]
 
 
+def available_keys() -> list[str]:
+    """The formats the installed FFmpeg can write (a build without the AMR encoders, say, does not offer AMR)."""
+    from . import ffmpeg as ff
+    if not ff._capability_set("encoders"):          # FFmpeg missing or unreadable: offer everything
+        return list(FORMATS)
+    return [key for key, spec in FORMATS.items() if ff.has_encoder(spec.codec)] or list(FORMATS)
+
+
 def nearest_rate(rate: int, allowed: tuple) -> int:
     if rate in allowed:
         return rate

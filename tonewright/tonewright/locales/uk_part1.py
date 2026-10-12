@@ -78,7 +78,7 @@ MESSAGES = {
     "Audiobook (*.m4b)": "Аудіокнига (*.m4b)",
     "Audiobook saved: {}": "Аудіокнигу збережено: {0}",
     "Author": "Автор",
-    "Automatic (follow Windows)": "Автоматично (як у Windows)",
+    "Automatic (follow the system)": "Автоматично (як у системі)",
     "Average level (RMS)": "Середній рівень (RMS)",
     "Average loudness (RMS)": "Середня гучність (RMS)",
     "Avoids clicks.": "Запобігає клацанням.",

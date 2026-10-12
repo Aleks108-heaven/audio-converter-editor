@@ -48,7 +48,7 @@ class FormatPicker(QWidget):
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.chips: dict[str, Chip] = {}
-        for i, key in enumerate(formats.FORMATS):
+        for i, key in enumerate(formats.available_keys()):
             chip = Chip(CHIP_LABELS.get(key, key.upper()))
             chip.setToolTip(tr(formats.FORMATS[key].name))
             self.group.addButton(chip)
@@ -143,6 +143,8 @@ class FormatPicker(QWidget):
 
     def _rebuild(self) -> None:
         s = self._s
+        if s.format not in self.chips:                      # a format this FFmpeg build cannot write (saved on another system)
+            s = self._s = replace(s, format=next(iter(self.chips)))
         spec: FormatSpec = s.spec
         self.chips[s.format].setChecked(True)
         self.description.setText(tr(spec.description))

@@ -71,8 +71,8 @@ MESSAGES = {
     "Tone length": "Тривалість тону",
     "Tone {} Hz": "Тон {0} Гц",
     "Tonewright": "Tonewright",
-    "Tonewright needs FFmpeg to read and write audio files, and could not find it.\n\nInstall it with:\n    winget install Gyan.FFmpeg\n\nthen start Tonewright again.":
-        "Tonewright потрібен FFmpeg, щоб читати й записувати аудіофайли, але його не знайдено.\n\nВстановіть його командою:\n    winget install Gyan.FFmpeg\n\nпісля чого знову запустіть Tonewright.",
+    "Tonewright needs FFmpeg to read and write audio files, and could not find it.\n\nInstall it with:\n    {}\n\nthen start Tonewright again.":
+        "Tonewright потрібен FFmpeg, щоб читати й записувати аудіофайли, але його не знайдено.\n\nВстановіть його командою:\n    {0}\n\nпісля чого знову запустіть Tonewright.",
     "Tools": "Інструменти",
     "Track": "Трек",
     "Track - Artist - Title": "Трек - Виконавець - Назва",
@@ -89,8 +89,8 @@ MESSAGES = {
     "Trimmed the silence at the ends": "Тишу на краях обрізано",
     "True peak": "Істинний пік",
     "True-peak ceiling": "Стеля істинного піку",
-    "Turns text into speech using the voices installed in Windows.":
-        "Перетворює текст на мовлення за допомогою голосів, установлених у Windows.",
+    "Turns text into speech using the voices installed on this computer.":
+        "Перетворює текст на мовлення за допомогою голосів, установлених на цьому комп’ютері.",
     "Turns the sound down whenever it falls below the threshold, silencing hiss between phrases.":
         "Приглушує звук, коли він опускається нижче порога, прибираючи шипіння між фразами.",
     "Type a command or effect…": "Введіть команду або ефект…",
@@ -197,8 +197,8 @@ MESSAGES = {
     "{} needs a stereo file.": "{0} потребує стереофайлу.",
     "{} noise": "{0} шум",
     "{} points": "{0} точок",
-    "{} was not found. Install FFmpeg (winget install Gyan.FFmpeg) and restart Tonewright.":
-        "{0} не знайдено. Установіть FFmpeg (winget install Gyan.FFmpeg) і перезапустіть Tonewright.",
+    "{} was not found. Install FFmpeg ({}) and restart Tonewright.":
+        "{0} не знайдено. Установіть FFmpeg ({1}) і перезапустіть Tonewright.",
     "{} · average spectrum of {}": "{0} · середній спектр: {1}",
     "{}-bit": "{0}-біт",
     "{}: peak {} dBFS, RMS {} dBFS, DC {}%": "{0}: пік {1} dBFS, RMS {2} dBFS, пост. складова {3}%",

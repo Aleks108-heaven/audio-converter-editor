@@ -158,7 +158,7 @@ class SpeechDialog(QDialog):
         head = QLabel(tr("Speech"))
         head.setProperty("role", "title")
         root.addWidget(head)
-        desc = QLabel(tr("Turns text into speech using the voices installed in Windows."))
+        desc = QLabel(tr("Turns text into speech using the voices installed on this computer."))
         desc.setProperty("role", "description")
         root.addWidget(desc)
         self.text = QPlainTextEdit()

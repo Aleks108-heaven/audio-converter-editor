@@ -1,8 +1,6 @@
 """Editing logic that connects the widgets to the core: files, clipboard, effects, tools, playback."""
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
@@ -825,7 +823,7 @@ class Controller(QObject):
 
     def _generate_speech(self, sr: int, ch: int) -> None:
         if not generate.speech_available():
-            self.error(tr("Speech"), tr("Speech generation needs the voices that come with Windows."))
+            self.error(tr("Speech"), tr("Speech generation needs the voices that come with your computer."))
             return
         dlg = SpeechDialog(self.win)
         if self.doc is None:
@@ -1271,8 +1269,8 @@ class Controller(QObject):
     def show_in_folder(self, item: LibraryItem) -> None:
         if item.path and item.path.exists():
             from .. import paths
-            subprocess.Popen([paths.explorer_exe(), "/select,", str(item.path)])
+            paths.reveal_in_file_manager(item.path)
 
     def open_data_folder(self) -> None:
         from .. import paths
-        os.startfile(str(paths.config_dir()))  # type: ignore[attr-defined]
+        paths.open_folder(paths.config_dir())
