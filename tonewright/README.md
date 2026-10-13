@@ -23,9 +23,19 @@ The app is built by GitHub: open the repository's **Actions** tab, pick the late
 it with `shasum -a 256`). Open the `.dmg` and drag **Tonewright** onto **Applications**. FFmpeg is inside the app.
 
 * **Opening it the first time.** The app is signed ad hoc, which is what Apple Silicon needs to run it at all, but it is
-  not notarised by Apple (that needs a paid developer account), so macOS says it cannot verify it. Control-click the app,
-  choose **Open**, then **Open** again; on recent macOS versions use **System Settings > Privacy & Security > Open
-  Anyway**. Or run `xattr -dr com.apple.quarantine /Applications/Tonewright.app` once.
+  not notarised by Apple (that needs a paid developer account), so macOS says it "could not verify Tonewright is free of
+  malware" and will not open it. This is Gatekeeper reacting to the download, not to FFmpeg or anything inside the app.
+  Remove the download flag once, in Terminal, then open the app as usual:
+
+  ```
+  xattr -dr com.apple.quarantine /Applications/Tonewright.app
+  open /Applications/Tonewright.app
+  ```
+
+  Or, without Terminal: try to open it, then go to **System Settings > Privacy & Security**, scroll down and press
+  **Open Anyway**. (On recent macOS versions Control-click > Open no longer gets past this.) Do the same again after
+  installing a newer version. Installing it with a Homebrew cask does not avoid this: Homebrew puts the same download
+  flag on the app, so the `xattr` command is still needed.
 * **Settings** live in `~/Library/Application Support/Tonewright`.
 * **Shortcuts:** wherever this guide says `Ctrl`, use **⌘ Command** on a Mac.
 * **Microphone:** Record asks for permission the first time.
