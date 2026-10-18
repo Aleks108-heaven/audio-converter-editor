@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -16,7 +17,7 @@ from ..audio.playback import Player
 from ..core import effects as fx
 from ..core import ffmpeg, ops
 from ..core.document import Clip, Document, PieceSeq
-from ..core.mixer import CHANNELS, DEFAULT_SR, MixClip, MixProject, custom_filters_in
+from ..core.mixer import CHANNELS, DEFAULT_SR, LiveMix, MixClip, MixProject, custom_filters_in
 from ..core.source import Source, SourceWriter
 from ..core.timefmt import format_time
 from ..i18n import tr
@@ -30,6 +31,10 @@ from .tasks import run_task
 from .widgets import TimeEdit, divider, icon_button, make_button, role_label, section_label
 
 PROJECT_FILTER = "Tonewright mix (*.twmix)"
+LIVE_INTERVAL_MS = 40         # at most one swap of the playing mix per this many milliseconds while it is being edited
+SCRUB_INTERVAL = 0.03         # seconds between jumps while dragging on the ruler
+EFFECT_LEAD_IN = 1.5          # seconds ahead of the start that an effect must be rendered for, before playing begins
+EFFECT_WAIT = 8.0             # the longest to wait for that (then it starts anyway and the effect comes in when ready)
 
 
 # ====================================================================== the controller
@@ -45,12 +50,20 @@ class MixController(QObject):
         self.project = MixProject()
         self.player = Player(stream_factory=state.player._factory)
         self.noise_store: dict = {}
-        self._rendered: Optional[tuple[int, Clip]] = None
+        self._live: Optional[LiveMix] = None              # what the player is playing; replaced after every change
+        self._effect_cache: dict = {}                     # rendered effect spans, shared by successive LiveMix objects
+        self._fx_pending = False
+        self._scrubbing = False
+        self._scrub_at = 0.0
         self._file_cache: dict = {}
         self._preview_active = False
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._tick)
+        self._live_timer = QTimer(self)                   # changes made while playing are swapped in at most this often
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(LIVE_INTERVAL_MS)
+        self._live_timer.timeout.connect(self._apply_live)
         self._dirty = False
         board.bind(self.project)
         board.editStarting.connect(self.begin_edit)
@@ -58,6 +71,8 @@ class MixController(QObject):
         board.addLineRequested.connect(self.add_line)
         board.addEffectRequested.connect(lambda: self.choose_effect_menu())
         board.lineRecordRequested.connect(self.record_to_line)
+        board.ruler.scrubRequested.connect(self.scrub)
+        board.ruler.scrubEnded.connect(self.end_scrub)
         c = board.canvas
         c.selectionChanged.connect(self.refreshed)
         c.playheadMoved.connect(self._playhead_moved)
@@ -88,11 +103,12 @@ class MixController(QObject):
 
     def _changed(self) -> None:
         self._dirty = True
+        self._live_changed()
         self.refreshed.emit()
 
     def begin_edit(self, label: str) -> None:
-        """Called before every change: playback stops and the change becomes one undo step."""
-        self.stop()
+        """Called before every change, which becomes one undo step. Playback goes on: the change is swapped into it
+        (see `_live_changed`), so moving a clip, trimming, changing a level or adding an effect is heard as it happens."""
         self.project.checkpoint(label)
 
     def _refresh_all(self) -> None:
@@ -104,10 +120,11 @@ class MixController(QObject):
                 self.canvas.select(None)
         self.board.refresh()
         self._dirty = True
+        self._live_changed()
         self.refreshed.emit()
 
     def _playhead_moved(self, frame: int) -> None:
-        if self.playing:
+        if self.playing and not self._scrubbing:                 # while scrubbing, `scrub` does the (throttled) seeking
             self.player.seek(frame)
         self.positionChanged.emit(frame)
 
@@ -123,14 +140,12 @@ class MixController(QObject):
 
     # ---- history
     def undo(self) -> None:
-        self.stop()
         label = self.project.undo()
         if label:
             self._refresh_all()
             self.info(tr(f"Undid {tr(label)}"))
 
     def redo(self) -> None:
-        self.stop()
         label = self.project.redo()
         if label:
             self._refresh_all()
@@ -401,52 +416,55 @@ class MixController(QObject):
         if a >= total - 1:
             a = 0
         b = min(total, a + 15 * self.sr)
-        self.stop()
-        ctx = self._effect_context(effect, a, b)
-        dlg = EffectDialog(effect, None, ctx, self.win)
-        accepted = dlg.exec() == QDialog.DialogCode.Accepted
-        ctx.stop_preview()
-        if not accepted:
-            return
-        self.begin_edit("Add effect")
+        resume = self._suspend()
         try:
-            span = self.project.add_effect(effect_id, dlg.values(), a, b)
-        except ValueError as exc:
-            self.project.undo()
-            self.error(tr(effect.name), exc)
-            return
-        self.canvas.select("effect", span.id)
-        self._refresh_all()
+            ctx = self._effect_context(effect, a, b)
+            dlg = EffectDialog(effect, None, ctx, self.win)
+            accepted = dlg.exec() == QDialog.DialogCode.Accepted
+            ctx.stop_preview()
+            if not accepted:
+                return
+            self.begin_edit("Add effect")
+            try:
+                span = self.project.add_effect(effect_id, dlg.values(), a, b)
+            except ValueError as exc:
+                self.project.undo()
+                self.error(tr(effect.name), exc)
+                return
+            self.canvas.select("effect", span.id)
+            self._refresh_all()
+        finally:
+            self._resume(resume)
 
     def edit_effect(self, span_id: int) -> None:
         span = self.project.effect_span(span_id)
         effect = fx.get(span.effect)
+        resume = self._suspend()
+        try:
+            ctx = self._effect_context(effect, span.start, min(span.end, max(span.start + 1, self.project.total_frames)))
+            dlg = EffectDialog(effect, span.params, ctx, self.win)
+            accepted = dlg.exec() == QDialog.DialogCode.Accepted
+            ctx.stop_preview()
+            if not accepted:
+                return
+            self.begin_edit("Edit effect")
+            self.project.set_effect(span_id, params=dlg.values())
+            self._refresh_all()
+        finally:
+            self._resume(resume)
+
+    def _suspend(self) -> Optional[int]:
+        """Stop for a dialog whose Preview plays through this same player. Returns the frame to pick up again from,
+        or None if nothing was playing (a paused mix stays stopped)."""
+        pos = self.player.position if self.playing and self.player.state == "playing" else None
         self.stop()
-        ctx = self._effect_context(effect, span.start, min(span.end, max(span.start + 1, self.project.total_frames)))
-        dlg = EffectDialog(effect, span.params, ctx, self.win)
-        accepted = dlg.exec() == QDialog.DialogCode.Accepted
-        ctx.stop_preview()
-        if not accepted:
-            return
-        self.begin_edit("Edit effect")
-        self.project.set_effect(span_id, params=dlg.values())
-        self._refresh_all()
+        return pos
+
+    def _resume(self, pos: Optional[int]) -> None:
+        if pos is not None and not self.project.empty:
+            self.play(pos)
 
     # ---- playback
-    def _render_for_playback(self) -> Optional[Clip]:
-        if self._rendered is not None and self._rendered[0] == self.project.version:
-            return self._rendered[1]
-        try:
-            ok, clip = run_task(self.win, tr("Preparing the mix"), lambda progress, cancel: self.project.render(progress=progress, cancel=cancel),
-                                message=tr("Mixing the lines…"), delay_ms=250)
-        except Exception as exc:  # noqa: BLE001
-            self.error(tr("Playback"), exc)
-            return None
-        if not ok:
-            return None
-        self._rendered = (self.project.version, clip)
-        return clip
-
     def toggle_play(self) -> None:
         if self.playing:
             self.player.toggle_pause()
@@ -454,36 +472,123 @@ class MixController(QObject):
             return
         self.play()
 
+    def _new_live(self) -> LiveMix:
+        """A fresh copy of the mix as it is now, with its effects rendering in the background."""
+        if self._live is not None:
+            self._live.close()
+        self._live = live = self.project.live(self._effect_cache)
+        live.start_effects()
+        return live
+
     def play(self, from_frame: Optional[int] = None) -> None:
         if self.project.empty:
             self.info(tr("Add some audio to the mix first"))
             return
         self.main_ctl.stop_playback()
         self.stop()
-        clip = self._render_for_playback()
-        if clip is None or clip.frames == 0:
+        live = self._new_live()
+        if live.frames == 0:
             return
         start = self.canvas.playhead if from_frame is None else from_frame
-        if start >= clip.frames - 1:
+        if start >= live.frames - 1:
             start = 0
+        if not self._prepare_effects(live, start):
+            return
         self.player.volume = float(self.state.settings.get("volume", 0.9))
         self.player.device = self.state.player.device
         try:
-            self.player.play(clip, start)
+            self.player.play(live, start)
         except AudioDeviceError as exc:
             self.error(tr("Playback"), exc)
             return
         self._timer.start()
         self.playStateChanged.emit()
 
+    def _prepare_effects(self, live: LiveMix, start: int) -> bool:
+        """Starting inside an effect: give it a moment to render, so the first thing heard already has the effect.
+        Everything later renders while the mix plays. False if the user cancelled."""
+        ahead = int(EFFECT_LEAD_IN * self.sr)
+        if not live.pending_at(start, ahead):
+            return True
+        live.start_effects(delay=0.0)
+
+        def wait(progress, cancel):
+            end = time.monotonic() + EFFECT_WAIT
+            while live.pending_at(start, ahead) and time.monotonic() < end:
+                cancel.check()
+                time.sleep(0.02)
+
+        try:
+            ok, _ = run_task(self.win, tr("Preparing the effect"), wait, message=tr("Rendering the effect…"), delay_ms=400)
+        except Exception as exc:  # noqa: BLE001
+            self.error(tr("Playback"), exc)
+            return False
+        return ok
+
+    def _live_changed(self) -> None:
+        """The project changed. If it is playing, the player gets a fresh copy a moment later (changes that come
+        faster, like a clip being dragged, share one swap)."""
+        if self.playing and not self._live_timer.isActive():
+            self._live_timer.start()
+
+    def _apply_live(self) -> None:
+        if not self.playing:
+            return
+        if self.project.empty:
+            self.stop()
+            return
+        live = self._new_live()
+        if live.frames == 0 or not self.player.swap(live):
+            self.stop()
+
     def stop(self) -> None:
         was = self.player.state != "stopped"
         self._preview_active = False
+        self._scrubbing = False
+        self._live_timer.stop()
         if was:
             self.player.stop()
+        if self._live is not None:
+            self._live.close()
+            self._live = None
+        self._fx_pending = False
         self._timer.stop()
         if was:
             self.playStateChanged.emit()
+
+    def scrub(self, frame: int) -> None:
+        """Press and drag on the ruler: hear the mix at the pointer, to find a cut by ear. Does nothing while the mix
+        is playing (the ruler then simply moves the playhead)."""
+        if self.project.empty:
+            return
+        if self._scrubbing and self.player.state == "stopped":
+            self._scrubbing = False
+        if self._scrubbing:
+            now = time.monotonic()
+            if now - self._scrub_at >= SCRUB_INTERVAL:
+                self._scrub_at = now
+                self.player.seek(frame)
+            return
+        if self.playing or self._preview_active:
+            return
+        self.main_ctl.stop_playback()
+        live = self._new_live()
+        if live.frames == 0 or frame >= live.frames - 1:
+            return
+        self.player.volume = float(self.state.settings.get("volume", 0.9))
+        self.player.device = self.state.player.device
+        try:
+            self.player.play(live, max(0, frame))
+        except AudioDeviceError:
+            return                                           # scrubbing is a convenience: say nothing without a sound card
+        self._scrubbing = True
+        self._scrub_at = time.monotonic()
+        self._timer.start()
+        self.playStateChanged.emit()
+
+    def end_scrub(self) -> None:
+        if self._scrubbing:
+            self.stop()
 
     def go_start(self) -> None:
         self.canvas.place_playhead(0)
@@ -512,10 +617,24 @@ class MixController(QObject):
         pos = p.position
         self.canvas.set_playhead(pos, follow=True)
         self.positionChanged.emit(pos)
+        self._watch_effects()
         if p.consume_finished():
             p.stop()
             self._timer.stop()
             self.playStateChanged.emit()
+
+    def _watch_effects(self) -> None:
+        """Tell the user while an effect is still being rendered, and about it if that went wrong."""
+        live = self._live
+        if live is None:
+            return
+        if live.error is not None and not live.error_reported:
+            live.error_reported = True
+            self.error(tr("Playback"), live.error)
+        pending = live.pending
+        if pending != self._fx_pending:
+            self._fx_pending = pending
+            self.info(tr("Rendering the effects…") if pending else tr("Effects ready"))
 
     def confirm_quit(self) -> bool:
         """Offer to keep a mix that was never saved as a project."""
@@ -594,7 +713,7 @@ class MixController(QObject):
 
     def _replace_project(self, project: MixProject) -> None:
         self.project = project
-        self._rendered = None
+        self._effect_cache.clear()
         self._dirty = False
         self.board.bind(project)
         self.canvas.place_playhead(0)

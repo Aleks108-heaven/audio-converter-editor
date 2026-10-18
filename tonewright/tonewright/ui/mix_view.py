@@ -684,8 +684,12 @@ class MixCanvas(QWidget):
 
 # ====================================================================== ruler
 class MixRuler(QWidget):
+    scrubRequested = Signal(int)             # pressed or dragged: hear the mix at this frame
+    scrubEnded = Signal()
+
     def __init__(self, canvas: MixCanvas) -> None:
         super().__init__()
+        self._scrubbing = False
         self.canvas = canvas
         self.setFixedHeight(RULER_H)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -722,16 +726,24 @@ class MixRuler(QWidget):
         p.end()
 
     def _move(self, ev: QMouseEvent) -> None:
-        self.canvas.place_playhead(self.canvas.x_to_frame(max(0.0, ev.position().x())))
+        frame = self.canvas.x_to_frame(max(0.0, ev.position().x()))
+        self.canvas.place_playhead(frame)
+        self.scrubRequested.emit(self.canvas.playhead)
         self.update()
 
     def mousePressEvent(self, ev: QMouseEvent) -> None:
         if ev.button() == Qt.MouseButton.LeftButton:
+            self._scrubbing = True
             self._move(ev)
 
     def mouseMoveEvent(self, ev: QMouseEvent) -> None:
         if ev.buttons() & Qt.MouseButton.LeftButton:
             self._move(ev)
+
+    def mouseReleaseEvent(self, ev: QMouseEvent) -> None:
+        if ev.button() == Qt.MouseButton.LeftButton and self._scrubbing:
+            self._scrubbing = False
+            self.scrubEnded.emit()
 
     def wheelEvent(self, ev) -> None:
         self.canvas.wheelEvent(ev)

@@ -39,6 +39,39 @@ class FFmpegError(RuntimeError):
         self.detail = detail
 
 
+class OutputError(FFmpegError):
+    """The output file could not be written: FFmpeg could not open it, or it could not be moved into place. FFmpeg says
+    "No such file or directory" for every one of the causes, so `core.access.diagnose` finds the real one."""
+
+    def __init__(self, message: str, detail: str, path: str | os.PathLike) -> None:
+        super().__init__(message, detail)
+        self.path = Path(path)
+
+
+_OS_REFUSAL = (r"no such file or directory|permission denied|access is denied|operation not permitted|"
+               r"read-only file system|not a directory|is a directory")
+# FFmpeg opens its output with "Error opening output ...: <the operating system's reason>". The same words also begin
+# "Error opening output files: Encoder not found", which has nothing to do with the file, hence the reason is required.
+_OPEN_FAILED = re.compile(rf"(error opening output|could not open file|av_interleaved_write_frame\(\)|error writing)"
+                          rf"[^\n]*?({_OS_REFUSAL})", re.IGNORECASE)
+
+
+def opening_output_failed(stderr: str) -> bool:
+    """True if FFmpeg's error text says the operating system refused it the file it was asked to write."""
+    return bool(_OPEN_FAILED.search(stderr or ""))
+
+
+def _write_failure(message: str, out_path: str | os.PathLike, stderr: str) -> FFmpegError:
+    return OutputError(message, stderr, out_path) if opening_output_failed(stderr) else FFmpegError(message, stderr)
+
+
+def move_into_place(tmp: Path, out_path: Path) -> None:
+    try:
+        os.replace(tmp, out_path)
+    except OSError as exc:
+        raise OutputError(f"Could not save {out_path.name}", exc.strerror or str(exc), out_path) from exc
+
+
 # ---------------------------------------------------------------- locating
 def set_tool_override(name: str, path: str) -> None:
     _overrides[name] = path
@@ -534,8 +567,8 @@ def encode_pcm(chunks: Iterable[np.ndarray], sr: int, channels: int, out_path: s
         if cancel is not None:
             cancel.check()
         if rc != 0:
-            raise FFmpegError(f"Could not write {out_path.name}", proc.stderr_text)
-        os.replace(tmp, out_path)
+            raise _write_failure(f"Could not write {out_path.name}", out_path, proc.stderr_text)
+        move_into_place(tmp, out_path)
     except BaseException:
         proc.kill()
         proc.finish()
@@ -573,8 +606,8 @@ def convert_file(in_path: str | os.PathLike, out_path: str | os.PathLike, out_ar
         if cancel is not None:
             cancel.check()
         if rc != 0:
-            raise FFmpegError(f"Could not convert {Path(in_path).name}", proc.stderr_text)
-        os.replace(tmp, out_path)
+            raise _write_failure(f"Could not convert {Path(in_path).name}", out_path, proc.stderr_text)
+        move_into_place(tmp, out_path)
     except BaseException:
         proc.kill()
         proc.finish()

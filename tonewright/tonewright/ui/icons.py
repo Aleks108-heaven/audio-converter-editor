@@ -80,6 +80,11 @@ _ICONS: dict[str, str] = {
     "noise": '<path d="M3 12h1M6 8v8M9 5v14M12 9v6M15 4v16M18 8v8M21 11v2"/>',
     "keypad": '<circle cx="6" cy="6" r="1.5" fill="{c}"/><circle cx="12" cy="6" r="1.5" fill="{c}"/><circle cx="18" cy="6" r="1.5" fill="{c}"/><circle cx="6" cy="12" r="1.5" fill="{c}"/><circle cx="12" cy="12" r="1.5" fill="{c}"/><circle cx="18" cy="12" r="1.5" fill="{c}"/><circle cx="6" cy="18" r="1.5" fill="{c}"/><circle cx="12" cy="18" r="1.5" fill="{c}"/><circle cx="18" cy="18" r="1.5" fill="{c}"/>',
     "speech": '<path d="M4 5h16v11H11l-5 4v-4H4z"/><path d="M8 9h8M8 12.5h5"/>',
+    # a window with its left or right panel marked: the buttons that fold the library and the side panel away
+    "panel-left": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9.5 4v16"/>'
+                  '<path d="M5 4.9h4v14.2H5a1.1 1.1 0 0 1-1.1-1.1V6A1.1 1.1 0 0 1 5 4.9z" fill="{c}" opacity="0.3" stroke="none"/>',
+    "panel-right": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14.5 4v16"/>'
+                   '<path d="M19 4.9h-4v14.2h4a1.1 1.1 0 0 0 1.1-1.1V6A1.1 1.1 0 0 0 19 4.9z" fill="{c}" opacity="0.3" stroke="none"/>',
 }
 
 _STROKE = 1.8

@@ -8,7 +8,9 @@ audiobook maker), in one window, with its own look and its own way of working.
 
 ## Install it
 
-Run **`Tonewright-Setup-1.0.0.exe`** (build it with `installer\build_installer.ps1`, see below). It installs into
+Run **`Tonewright-Setup-1.1.0.exe`** from the
+[latest release](https://github.com/Aleks108-heaven/audio-converter-editor/releases/latest) (or build it yourself with
+`installer\build_installer.ps1`, see below). It installs into
 `C:\Program Files\Tonewright` (Windows asks for administrator approval once), so only an administrator can change the
 program files. Your settings, favourites and log stay in `%APPDATA%\Tonewright`, because Program Files is read-only for
 normal use. It adds a Start-menu entry and an optional Desktop icon, and has its own uninstaller. If you installed an
@@ -18,9 +20,11 @@ version over an older one just upgrades it and keeps your settings.
 
 ### On a Mac (M1 and newer)
 
-The app is built by GitHub: open the repository's **Actions** tab, pick the latest **macOS** run and download the
-**tonewright-macos-arm64** artifact. It holds `Tonewright-1.0.0-arm64.dmg` and `SHA256SUMS.txt` (check the file against
-it with `shasum -a 256`). Open the `.dmg` and drag **Tonewright** onto **Applications**. FFmpeg is inside the app.
+Download **`Tonewright-1.1.0-arm64.dmg`** and `SHA256SUMS.txt` from the
+[latest release](https://github.com/Aleks108-heaven/audio-converter-editor/releases/latest) (check the file against the
+sums with `shasum -a 256`). Open the `.dmg` and drag **Tonewright** onto **Applications**. FFmpeg is inside the app.
+GitHub builds the same file on a real Apple Silicon Mac for every change (the **Actions** tab, latest **macOS** run,
+artifact **tonewright-macos-arm64**).
 
 * **Opening it the first time.** The app is signed ad hoc, which is what Apple Silicon needs to run it at all, but it is
   not notarised by Apple (that needs a paid developer account), so macOS says it "could not verify Tonewright is free of
@@ -101,6 +105,15 @@ FFmpeg audio filter chain (for example `lowpass=f=3000,volume=2`).
 * **Zoom:** mouse wheel (towards the pointer), `Shift`+wheel scrolls, `Ctrl`+wheel zooms vertically,
   middle-drag pans. The strip at the top is an overview you can drag. Zoom all the way to single samples.
 * **Edits never copy audio**, so cut, paste and undo are instant even on a three-hour file.
+* **Editing does not stop the sound.** Cut, paste, delete, trim, undo and effects all go on playing: after a cut or a
+  paste the sound restarts 1.5 seconds before the join, so the join is the first thing you hear; an effect (which keeps
+  the length) carries on from where it was. Nothing starts playing by itself if you were not playing.
+* **Hear by dragging.** Press and hold on the ruler above the waveform and drag: you hear the audio under the pointer,
+  and it stops when you let go. That is the quickest way to find a cut by ear (while the file is already playing, a
+  click on the ruler just moves the playhead).
+* **Panels.** The library on the left and the panel on the right fold away with the two buttons at the top right (or
+  `Ctrl+B` and `Ctrl+Shift+B`, or the View menu), to give the waveform the whole window. They come back at the same width,
+  and Tonewright remembers your choice.
 * **Effects** (all work on the selection, or the whole file if nothing is selected; most can target
   just the left or right channel):
   * Volume: Amplify, Normalize (peak or RMS), Loudness Normalize (LUFS), Invert
@@ -141,7 +154,13 @@ Use it for transitions between songs, voice over music, or layering sounds.
   here.
 * **Split** at the playhead, **Duplicate**, **Delete**, and unlimited **Undo / Redo** (`Ctrl+Z` /
   `Ctrl+Y`). Clips never copy audio, so these are instant.
-* **Play** renders the mix and plays it (`Space`). If the mix would clip, you are offered to lower it.
+* **Play** (`Space`) starts at once: the lines are mixed as the sound plays, so there is nothing to wait for. **Editing
+  never stops it.** Move or trim a clip, change a fade or a level, mute a line, split, delete, undo: the sound follows
+  every change within a fraction of a second, so you can hear what you are doing. An effect you add starts playing as
+  soon as it is rendered (the status bar says so); a mix that has to be rendered first only asks you to wait when you
+  start playing inside an effect.
+* **Hear by dragging.** Press and hold on the ruler, and drag: you hear the mix under the pointer, and it stops when
+  you let go. Handy for finding the exact place to split.
 * **Build the mix…** creates the final file. You can keep it as a document in the Library (to edit it
   further or convert it), or save it straight away in any supported format.
 * **Projects:** save the arrangement as a small `.twmix` file and open it later. It stores where the
@@ -170,6 +189,7 @@ Adding another language means one new file in `tonewright/locales/` (see `tonewr
 | Start / End `Home` / `End` | ±5 s `Ctrl+←` / `Ctrl+→` | Marker `M` | Prev / Next marker `[` `]` |
 | Zoom in / out `Ctrl+=` / `Ctrl+-` | Fit `Ctrl+0` | Zoom to selection `Ctrl+9` | Repeat last effect `Ctrl+Shift+E` |
 | Search commands `Ctrl+K` | Find an effect `Ctrl+E` | Statistics `Ctrl+I` | All shortcuts `F1` |
+| Library on / off `Ctrl+B` | Right panel on / off `Ctrl+Shift+B` | | |
 
 ## Good to know
 
@@ -185,6 +205,18 @@ Adding another language means one new file in `tonewright/locales/` (see `tonewr
   message, and the details are saved to `tonewright.log` there.
 
 ## Troubleshooting
+
+* **Saving fails with "Windows Security blocked Tonewright".** Windows' ransomware protection (*Controlled folder
+  access*) only lets approved programs change files in Documents, Music, Videos, Pictures and Desktop, and it judges
+  every program on its own, so FFmpeg can be stopped while Tonewright is not. The message names the folder and the two
+  programs and has an **Open Windows Security** button. There choose *Allow an app through Controlled folder access >
+  Add an allowed app > Browse all apps* and add `C:\Program Files\Tonewright\python\pythonw.exe` and
+  `C:\Program Files\Tonewright\app\bin\ffmpeg.exe`. You only do it once. (Saving to a folder that is not protected
+  works without it.)
+* **The taskbar shows a Python logo.** Right-click that button, choose *Unpin from taskbar*, start Tonewright from the
+  Start menu and pin it again. An older version let Windows pin the Python program itself; the installer now gives its
+  shortcuts Tonewright's own identity, so a pin made from the Start-menu shortcut or from the running window gets
+  Tonewright's icon and starts Tonewright.
 
 * **"Tonewright needs FFmpeg"**: run `winget install Gyan.FFmpeg`, then start again. (Or set `ffmpeg_dir` in
   `%APPDATA%\Tonewright\settings.json`.)

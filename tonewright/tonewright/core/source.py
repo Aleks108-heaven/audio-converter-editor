@@ -19,6 +19,8 @@ from .. import paths
 SPILL_BYTES = 48 * 1024 * 1024   # sources larger than this are kept on disk
 PEAK_BASE = 64                   # frames summarised by one level-0 peak block
 PEAK_FACTOR = 8                  # every further level summarises 8 blocks of the last
+PEAK_SLACK = 16                  # a drawn interval spans at least this many pyramid blocks of the level used for it
+PEAK_RAW_BELOW = 1024            # intervals shorter than this (frames) are read from the audio, not the pyramid
 _SCAN_CHUNK = 1 << 21            # frames per bulk read while scanning a source
 
 
@@ -178,7 +180,13 @@ class Source:
         return self._peaks is not None
 
     def minmax(self, edges: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Per-interval (min, max) over consecutive frame edges, as (k, channels) arrays."""
+        """Per-interval (min, max) over consecutive frame edges, as (k, channels) arrays.
+
+        Short intervals are read from the audio itself. Longer ones come from the peak pyramid, using blocks at most
+        1/PEAK_SLACK of an interval wide and cutting at the *nearest* block boundary, so what is drawn for a pixel is
+        the audio under that pixel give or take a few percent of its width (cutting at the floor, with blocks up to
+        half an interval wide, smeared loud and quiet passages into the pixel beside them: errors of 15 % of full
+        scale on real music)."""
         edges = np.asarray(edges, dtype=np.int64)
         k = len(edges) - 1
         if k <= 0:
@@ -186,9 +194,9 @@ class Source:
             return z, z
         per = (edges[-1] - edges[0]) / k
         level = -1
-        if per / 2 >= PEAK_BASE:
-            level = int(np.floor(np.log(per / 2 / PEAK_BASE) / np.log(PEAK_FACTOR)))
-            level = min(level, self.peaks().levels - 1)
+        if per >= PEAK_RAW_BELOW:
+            level = int(np.floor(np.log(per / PEAK_SLACK / PEAK_BASE) / np.log(PEAK_FACTOR) + 1e-9))
+            level = max(0, min(level, self.peaks().levels - 1))
         if level < 0:
             seg = self.read(int(edges[0]), int(edges[-1]))
             if len(seg) == 0:
@@ -201,14 +209,40 @@ class Source:
         size = Peaks.block(level)
         mn, mx = pk.mins[level], pk.maxs[level]
         n_blocks = mn.shape[0]
-        lo = np.minimum(edges // size, n_blocks - 1)
-        hi = min(n_blocks, -(-int(edges[-1]) // size))
-        hi = max(hi, int(lo[:-1].max()) + 1)
+        bounds = np.minimum((edges + size // 2) // size, n_blocks)       # nearest block boundary to every edge
+        lo = np.minimum(bounds[:-1], n_blocks - 1)
+        hi = max(int(bounds[-1]), int(lo.max()) + 1)                      # every interval gets at least one block
         first = int(lo[0])
-        starts = lo[:-1] - first
         sl = slice(first, hi)
-        return (np.minimum.reduceat(mn[sl], starts, axis=0),
-                np.maximum.reduceat(mx[sl], starts, axis=0))
+        out_min = np.minimum.reduceat(mn[sl], lo - first, axis=0)
+        out_max = np.maximum.reduceat(mx[sl], lo - first, axis=0)
+        # The outer edges are where the caller's piece of audio begins and ends: there the window must not take in
+        # (or lose) a few dozen frames, or a sound just beyond a cut would show up in the picture.
+        for i in {0, k - 1}:
+            out_min[i], out_max[i] = self._exact_minmax(int(edges[i]), int(edges[i + 1]), pk.levels - 1)
+        return out_min, out_max
+
+    def _exact_minmax(self, a: int, b: int, level: int) -> tuple[np.ndarray, np.ndarray]:
+        """Exact per-channel (min, max) of frames [a, b): whole pyramid blocks for the bulk, finer levels (and in the
+        end the audio itself) for the ragged ends."""
+        if b <= a:
+            z = np.zeros(self.channels, np.float32)
+            return z, z
+        if level < 0:
+            seg = self.read(a, b)
+            return seg.min(axis=0), seg.max(axis=0)
+        size = Peaks.block(level)
+        s, e = -(-a // size) * size, (b // size) * size
+        if s >= e:
+            return self._exact_minmax(a, b, level - 1)
+        pk = self.peaks()
+        lo = pk.mins[level][s // size:e // size].min(axis=0)
+        hi = pk.maxs[level][s // size:e // size].max(axis=0)
+        for x, y in ((a, s), (e, b)):
+            if y > x:
+                part_lo, part_hi = self._exact_minmax(x, y, level - 1)
+                lo, hi = np.minimum(lo, part_lo), np.maximum(hi, part_hi)
+        return lo, hi
 
     def close(self) -> None:
         store, self._store = self._store, _RamStore(np.zeros((0, self.channels), np.float32))

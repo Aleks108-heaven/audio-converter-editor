@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QDialog, QFileDialog,
 
 from .. import __version__, i18n
 from .. import paths as app_paths
-from ..core import audiobook, formats
+from ..core import access, audiobook, formats
 from ..core import effects as fx
 from ..core import ffmpeg
 from ..core import tags as tagmod
@@ -85,6 +85,9 @@ class MainWindow(QMainWindow):
         self._convert_job: Optional[Job] = None
         self._book_job: Optional[Job] = None
         self._book_path_touched = False
+        saved = state.settings.get("panels") or {}
+        self._panels = {"library": bool(saved.get("library", True)), "side": bool(saved.get("side", True))}   # what the user chose
+        self._panel_width = {"library": 310, "side": 370}                # how wide each was last time it was open
 
         self._build_actions()
         self._build_ui()
@@ -179,6 +182,10 @@ class MainWindow(QMainWindow):
         act("snap_zero", "Snap selections to zero crossings", self._toggle_snap, None, checkable=True,
             checked=bool(self.state.settings.get("snap_zero_crossings", False)))
         act("spec_log", "Logarithmic frequency axis", self._toggle_spec_log, None, checkable=True, checked=True)
+        act("toggle_library", "Show the library", lambda on: self._show_panel("library", on), "Ctrl+B", "panel-left",
+            "Show or hide the library  (Ctrl+B)", checkable=True, checked=self._panels["library"])
+        act("toggle_side", "Show the side panel", lambda on: self._show_panel("side", on), "Ctrl+Shift+B", "panel-right",
+            "Show or hide the panel on the right  (Ctrl+Shift+B)", checkable=True, checked=self._panels["side"])
         act("theme", "Switch to light theme", self.toggle_theme, None, "sun")
         # transport
         act("play", "Play / Pause", c("toggle_play"), "Space", "play", "Play or pause")
@@ -268,6 +275,19 @@ class MainWindow(QMainWindow):
         self.theme_btn = icon_button("sun", tr("Switch theme"))
         self.theme_btn.clicked.connect(self.toggle_theme)
         hl.addWidget(self.theme_btn)
+        hl.addSpacing(4)
+        hl.addWidget(divider(True))
+        hl.addSpacing(4)
+        self.panel_buttons: dict[str, QToolButton] = {}
+        for key in ("toggle_library", "toggle_side"):                    # fold the left and the right panel away and back
+            b = QToolButton()
+            b.setDefaultAction(self.actions[key])
+            b.setIconSize(QSize(20, 20))
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            b.setAutoRaise(True)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.panel_buttons[key] = b
+            hl.addWidget(b)
 
         # ---- edit toolbar
         self.toolbar = QWidget()
@@ -425,9 +445,9 @@ class MainWindow(QMainWindow):
             edit.addSeparator() if key is None else edit.addAction(a[key])
 
         view = mb.addMenu(tr("View"))
-        for key in ("view_waveform", "view_spectral", "view_envelope", None, "zoom_in", "zoom_out", "zoom_selection",
-                    "zoom_fit", "zoom_samples", "vzoom_in", "vzoom_out", None, "show_db", "follow", "snap_zero",
-                    "spec_log"):
+        for key in ("toggle_library", "toggle_side", None, "view_waveform", "view_spectral", "view_envelope", None,
+                    "zoom_in", "zoom_out", "zoom_selection", "zoom_fit", "zoom_samples", "vzoom_in", "vzoom_out", None,
+                    "show_db", "follow", "snap_zero", "spec_log"):
             view.addSeparator() if key is None else view.addAction(a[key])
         view.addSeparator()
         res = view.addMenu(tr("Spectrogram detail"))
@@ -485,6 +505,8 @@ class MainWindow(QMainWindow):
         stage.cursorChanged.connect(ctl.on_cursor_changed)
         stage.viewChanged.connect(ctl.on_view_changed)
         stage.seekRequested.connect(ctl.seek_requested)
+        stage.scrubRequested.connect(ctl.scrub)
+        stage.scrubEnded.connect(ctl.end_scrub)
         stage.openRequested.connect(ctl.open_dialog)
         stage.contextMenuRequested.connect(self._stage_menu)
         stage.markerClicked.connect(lambda i: self.edit_panel.show_tab("Markers"))
@@ -550,6 +572,7 @@ class MainWindow(QMainWindow):
                       "play": "Transport", "stop": "Transport", "loop": "Transport", "go_start": "Transport",
                       "go_end": "Transport", "zoom_in": "View", "zoom_out": "View", "zoom_selection": "View",
                       "zoom_fit": "View", "view_waveform": "View", "view_spectral": "View", "view_envelope": "View",
+                      "toggle_library": "View", "toggle_side": "View",
                       "theme": "View", "mode_convert": "Go to", "mode_edit": "Go to", "mode_tags": "Go to",
                       "mode_audiobook": "Go to", "about": "Help", "shortcuts": "Help", "repeat_effect": "Effects"}
             for key, group in groups.items():
@@ -584,7 +607,7 @@ class MainWindow(QMainWindow):
             self.ctl.stop_playback()
         else:
             self.mix_page.ctl.stop()
-        self.right_wrap.setVisible(mode != "tags")
+        self._apply_panels()
         if mode in RIGHT_PAGE:
             self.right_stack.setCurrentIndex(RIGHT_PAGE[mode])
         self.convert_bar.setVisible(mode == "convert")
@@ -601,6 +624,48 @@ class MainWindow(QMainWindow):
         self.ctl.show_current()
         self.update_actions()
         self.state.modeChanged.emit(mode)
+
+    # ================================================================ the left and right panels
+    def _show_panel(self, key: str, on: bool) -> None:
+        """The user folded the library ("library") or the panel on the right ("side") away, or brought it back."""
+        self._panels[key] = on
+        self.state.settings.set("panels", dict(self._panels))
+        self._apply_panels()
+
+    def _apply_panels(self) -> None:
+        """Show or hide the panels as the user chose. The panel on the right is never shown in Tags mode, which has
+        its own editor, whatever was chosen; the choice comes back when another mode is selected."""
+        wanted = {"library": self._panels["library"], "side": self._panels["side"] and self.state.mode != "tags"}
+        for key, widget in (("library", self.library), ("side", self.right_wrap)):
+            if wanted[key] != widget.isHidden():                         # already as it should be
+                continue
+            index = self.splitter.indexOf(widget)
+            if not wanted[key]:
+                width = self.splitter.sizes()[index]
+                if width > 0:
+                    self._panel_width[key] = width                       # remember it, to open at the same width again
+                widget.setVisible(False)
+                continue
+            widget.setVisible(True)
+            sizes = self.splitter.sizes()
+            total = sum(sizes)
+            sizes[index] = self._panel_width[key]
+            sizes[1] = max(300, total - sizes[0] - sizes[2])             # the room comes from the middle
+            self.splitter.setSizes(sizes)
+            QTimer.singleShot(0, lambda s=sizes: self._set_splitter_sizes(s))    # the splitter finishes showing it after this returns
+        for key, name in (("library", "toggle_library"), ("side", "toggle_side")):
+            action = self.actions[name]
+            if action.isChecked() != self._panels[key]:                  # e.g. restored from the settings
+                action.blockSignals(True)
+                action.setChecked(self._panels[key])
+                action.blockSignals(False)
+        self.actions["toggle_side"].setEnabled(self.state.mode != "tags")
+
+    def _set_splitter_sizes(self, sizes: list[int]) -> None:
+        """Re-apply the widths a panel should open at, unless a panel was folded again in the meantime."""
+        if (self.library.isHidden() != (sizes[0] == 0)) or (self.right_wrap.isHidden() != (sizes[2] == 0)):
+            return
+        self.splitter.setSizes(sizes)
 
     def _current_changed(self, item: Optional[LibraryItem]) -> None:
         self.ctl.show_current()
@@ -1099,7 +1164,11 @@ class MainWindow(QMainWindow):
         self.book_bar.set_running(False)
         self._book_job = None
         if error is not None:
-            self.book_bar.set_status(tr(f"Failed: {str(error).strip().splitlines()[0] if str(error).strip() else error}"), "bad")
+            if isinstance(error, ffmpeg.OutputError):                  # say why the file could not be written
+                reason = access.one_line(access.diagnose(error.path, error.detail), error.path.name)
+            else:
+                reason = str(error).strip().splitlines()[0] if str(error).strip() else str(error)
+            self.book_bar.set_status(tr(f"Failed: {reason}"), "bad")
             return
         if cancelled or result is None:
             self.book_bar.set_status(tr("Cancelled"), "warn")
@@ -1127,9 +1196,14 @@ class MainWindow(QMainWindow):
             if w.get("geometry"):
                 self.restoreGeometry(QByteArray(base64.b64decode(w["geometry"])))
             if w.get("sizes") and len(w["sizes"]) == 3:
-                self.splitter.setSizes([int(s) for s in w["sizes"]])
+                sizes = [int(s) for s in w["sizes"]]
+                for key, i in (("library", 0), ("side", 2)):
+                    if sizes[i] > 0:
+                        self._panel_width[key] = sizes[i]
+                self.splitter.setSizes(sizes)
         except (ValueError, TypeError):
             pass
+        self._apply_panels()
 
     def showEvent(self, ev) -> None:
         super().showEvent(ev)
@@ -1153,6 +1227,10 @@ class MainWindow(QMainWindow):
             return
         self.ctl.stop_playback()
         self.mix_page.ctl.stop()
+        sizes = self.splitter.sizes()
+        for key, i in (("library", 0), ("side", 2)):
+            if sizes[i] <= 0:                                            # folded away: keep the width it will open at
+                sizes[i] = self._panel_width[key]
         self.state.settings.set("window", {"geometry": base64.b64encode(bytes(self.saveGeometry())).decode("ascii"),
-                                           "sizes": self.splitter.sizes()})
+                                           "sizes": sizes})
         ev.accept()

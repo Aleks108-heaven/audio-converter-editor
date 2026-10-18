@@ -26,6 +26,10 @@ class CancelToken:
         if self._event.is_set():
             raise Cancelled()
 
+    def wait(self, timeout: float) -> bool:
+        """Sleep up to `timeout` seconds; True if the token was cancelled meanwhile."""
+        return self._event.wait(timeout)
+
 
 class PauseToken:
     """Lets the UI pause a running job; workers call wait() between steps."""

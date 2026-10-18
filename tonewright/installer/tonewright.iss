@@ -1,6 +1,6 @@
 ; Tonewright installer. Build it with installer\build_installer.ps1 (it stages the files first).
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 #ifndef StageDir
   #define StageDir "build\stage"
@@ -65,9 +65,13 @@ Type: filesandordirs; Name: "{app}\app"
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Tonewright"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m tonewright"; WorkingDir: "{app}"; IconFilename: "{app}\Tonewright.ico"; Comment: "Audio converter, editor and audiobook maker"
+; AppUserModelID is the same id the program gives itself at start-up (tonewright\app.py). It is what ties the taskbar
+; button of the running window to these shortcuts: pinned to the taskbar or not, the button shows Tonewright's icon and
+; starts Tonewright. Without it Windows only sees pythonw.exe, and pins that program (the Python logo, and nothing
+; happens when it is clicked).
+Name: "{autoprograms}\Tonewright"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m tonewright"; WorkingDir: "{app}"; IconFilename: "{app}\Tonewright.ico"; AppUserModelID: "Tonewright.AudioWorkbench"; Comment: "Audio converter, editor and audiobook maker"
 Name: "{autoprograms}\{cm:ThirdPartyNotices}"; Filename: "{app}\THIRD-PARTY-NOTICES.txt"
-Name: "{autodesktop}\Tonewright"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m tonewright"; WorkingDir: "{app}"; IconFilename: "{app}\Tonewright.ico"; Tasks: desktopicon
+Name: "{autodesktop}\Tonewright"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m tonewright"; WorkingDir: "{app}"; IconFilename: "{app}\Tonewright.ico"; AppUserModelID: "Tonewright.AudioWorkbench"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\python\pythonw.exe"; Parameters: "-m tonewright"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,Tonewright}"; Flags: nowait postinstall skipifsilent

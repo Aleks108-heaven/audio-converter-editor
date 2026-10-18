@@ -620,12 +620,120 @@ def test_play_pause_stop_loop_and_seek(loaded, qapp):
     assert wait_until(qapp, lambda: st.playhead is None)         # the UI tick notices the end
 
 
-def test_editing_stops_playback(loaded, qapp):
+def paused_at(win, qapp, frame: int):
+    """Playing, then frozen at `frame`, so what an edit does to the playback can be looked at without racing the clock."""
+    player = win.state.player
+    win.ctl.toggle_play()
+    assert wait_until(qapp, lambda: player.position > 0)
+    win.ctl.toggle_play()
+    assert player.state == "paused"
+    player.seek(frame)
+    return player
+
+
+def test_a_cut_does_not_stop_playback_and_the_join_is_replayed(loaded, qapp):
+    player = paused_at(loaded, qapp, 5 * SR // 2)
+    old = player.sequence
+    loaded.stage.set_selection(SR, 2 * SR)
+    loaded.ctl.delete()
+    assert player.state == "paused"                                      # the same playback: edited, not stopped
+    assert player.sequence is not old and player.sequence.frames == 2 * SR
+    assert player.position == 0                                          # 1.5 s before the cut, at 1 s, is the start
+    loaded.stage.clear_selection()
+    loaded.stage.set_selection(3 * SR // 2, 2 * SR)                      # a cut later in the file: restarts 1.5 s before it
+    loaded.ctl.delete()
+    assert player.position == 0 and player.sequence.frames == 3 * SR // 2
     loaded.ctl.toggle_play()
-    assert loaded.state.player.state == "playing"
+    assert player.state == "playing"
+    loaded.ctl.stop_playback()
+
+
+def test_playback_continues_with_the_pasted_audio(loaded, qapp):
+    player = paused_at(loaded, qapp, SR)
+    loaded.stage.set_selection(SR // 2, SR)
+    loaded.ctl.copy()
+    loaded.stage.clear_selection()
+    loaded.stage.set_cursor(2 * SR)
+    loaded.ctl.paste()
+    assert player.state == "paused" and player.sequence.frames == 3 * SR + SR // 2
+    assert player.position == max(0, 2 * SR - int(1.5 * SR))
+    np.testing.assert_array_equal(player.sequence.read(2 * SR, 2 * SR + 100), loaded.ctl.doc.read(2 * SR, 2 * SR + 100))
+    loaded.ctl.stop_playback()
+
+
+def test_an_effect_on_a_range_carries_on_from_the_same_place(loaded, qapp):
+    player = paused_at(loaded, qapp, 5 * SR // 2)
+    old = player.sequence
+    loaded.stage.set_selection(SR, 2 * SR)
+    loaded.ctl.apply_effect(fx.get("amplify"), {"gain": -6.0, "prevent_clipping": False})
+    assert player.state == "paused" and player.sequence is not old and player.sequence.frames == 3 * SR
+    assert player.position == 5 * SR // 2                                # an effect keeps the length: nothing to replay
+    loaded.ctl.stop_playback()
+
+
+def test_undo_and_redo_keep_playing_too(loaded, qapp):
+    player = paused_at(loaded, qapp, 2 * SR)
     loaded.stage.set_selection(0, SR)
     loaded.ctl.delete()
-    assert loaded.state.player.state == "stopped"
+    assert player.sequence.frames == 2 * SR
+    loaded.ctl.undo()
+    assert player.state == "paused" and player.sequence.frames == 3 * SR
+    loaded.ctl.redo()
+    assert player.state == "paused" and player.sequence.frames == 2 * SR
+    loaded.ctl.stop_playback()
+
+
+def test_a_change_of_format_still_stops_playback(loaded, qapp):
+    player = paused_at(loaded, qapp, SR)
+    doc = loaded.ctl.doc
+    assert doc.sr == SR
+    from tonewright.core import ops
+    ok = ops.convert_format(doc.snapshot(), 22050, doc.channels)
+    doc.replace_all(ok, "Convert format")
+    assert player.state == "stopped"
+
+
+def test_editing_a_stopped_file_does_not_start_playing(loaded, qapp):
+    loaded.stage.set_selection(0, SR)
+    loaded.ctl.delete()
+    assert loaded.state.player.state == "stopped" and not FakeOutput.instances
+
+
+def ruler_event(stage, kind, fraction, buttons=Qt.MouseButton.LeftButton) -> int:
+    """Press, move or release on the ruler `fraction` of the way across the lanes; returns the frame that is under it."""
+    lr, rr = stage.lane_rect(), stage.ruler_rect()
+    x, y = lr.left() + lr.width() * fraction, rr.center().y()
+    _mouse(stage, kind, x, y, button=buttons)
+    return int(round(stage.x_to_frame(x)))
+
+
+def test_dragging_on_the_ruler_plays_what_is_under_the_pointer(loaded, qapp):
+    st, ctl, player = loaded.stage, loaded.ctl, loaded.state.player
+    st.resize(1000, 520)
+    st.zoom_fit()
+    first = ruler_event(st, QEvent.Type.MouseButtonPress, 0.25)
+    assert player.state == "playing" and ctl._scrubbing
+    assert abs(player.position - first) < 0.1 * SR
+    pump(qapp, 80)
+    second = ruler_event(st, QEvent.Type.MouseMove, 0.75)
+    assert wait_until(qapp, lambda: abs(player.position - second) < 0.2 * SR)
+    ruler_event(st, QEvent.Type.MouseButtonRelease, 0.75)
+    assert player.state == "stopped" and not ctl._scrubbing and st.playhead is None
+    assert st.selection is not None                                       # it was still a normal click and drag as well
+
+
+def test_clicking_the_ruler_while_playing_moves_the_playhead_and_does_not_scrub(loaded, qapp):
+    st, ctl, player = loaded.stage, loaded.ctl, loaded.state.player
+    st.resize(1000, 520)
+    st.zoom_fit()
+    ctl.toggle_play()
+    assert wait_until(qapp, lambda: st.playhead is not None)
+    ruler_event(st, QEvent.Type.MouseButtonPress, 0.6)
+    assert not ctl._scrubbing
+    target = ruler_event(st, QEvent.Type.MouseButtonRelease, 0.6)
+    assert player.state == "playing"
+    assert wait_until(qapp, lambda: abs(player.position - target) < 0.3 * SR)
+    ctl.stop_playback()
 
 
 def test_transport_buttons_follow_actions(loaded):

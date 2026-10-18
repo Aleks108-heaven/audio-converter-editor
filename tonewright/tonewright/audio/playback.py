@@ -1,14 +1,17 @@
-"""Real-time playback with loop, pause, seek and level metering.
+"""Real-time playback with loop, pause, seek, live swapping and level metering.
 
 A feeder thread reads blocks from an immutable snapshot of the document ahead of
 the sound card, so editing never disturbs what is playing and the audio callback
-only copies memory.
+only copies memory. `swap` hands the player a newer snapshot while it plays (the
+editor and the mixer use it to keep the sound going through an edit) and `seek`
+jumps within the current one; both pre-fill the new queue before switching to it,
+so the card never runs dry and nothing is heard but the change itself.
 """
 from __future__ import annotations
 
 import queue
 import threading
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import numpy as np
 
@@ -17,6 +20,7 @@ from .devices import AudioDeviceError, sd
 
 BLOCK = 2048
 QUEUE_BLOCKS = 24
+PREFILL_BLOCKS = 4          # read on the calling thread before a seek or swap takes effect (about 190 ms at 44.1 kHz)
 
 
 class Player:
@@ -24,8 +28,9 @@ class Player:
         self._factory = stream_factory
         self._stream = None
         self._lock = threading.RLock()
-        self._queue: queue.Queue = queue.Queue(maxsize=QUEUE_BLOCKS)
+        self._pos_lock = threading.Lock()                # only ever held for an assignment or two, also by the audio thread
         self._gen = 0
+        self._feedq: tuple[int, queue.Queue] = (0, queue.Queue(maxsize=QUEUE_BLOCKS))   # (generation, blocks), swapped as one
         self._seq: Optional[PieceSeq] = None
         self._start = 0
         self._end = 0
@@ -55,6 +60,11 @@ class Player:
         return self._state == "playing"
 
     @property
+    def sequence(self) -> Optional[PieceSeq]:
+        """What is being played now (None when stopped); the audio `swap` replaced is what this returned before."""
+        return self._seq if self._state != "stopped" else None
+
+    @property
     def position(self) -> int:
         """Frame currently being heard (compensating for the card's output latency)."""
         if self._seq is None:
@@ -65,6 +75,20 @@ class Player:
         except (AttributeError, TypeError):
             lat = 0
         return max(self._loop_a if self._loop else self._start, self._pos_src - lat)
+
+    @property
+    def start(self) -> int:
+        """The frame playback began (or last restarted) from."""
+        return self._start
+
+    @property
+    def end(self) -> int:
+        """The frame playback runs up to (the end of the audio, or of the selection that was played)."""
+        return self._end
+
+    @property
+    def loop_range(self) -> Optional[tuple[int, int]]:
+        return (self._loop_a, self._loop_b) if self._loop else None
 
     def consume_finished(self) -> bool:
         """True once after playback ran off the end."""
@@ -98,9 +122,8 @@ class Player:
             self._finished = False
             self._cur = None
             self._pos_src = start
-            self._drain()
             self._open_stream(seq.sr)
-            self._spawn_feeder(start)
+            self._begin_feed(start)
             self._state = "playing"
             self._stream.start()
 
@@ -115,19 +138,46 @@ class Player:
             self._stream = None
             raise AudioDeviceError(f"Could not open the audio output: {exc}") from exc
 
-    def _drain(self) -> None:
-        try:
-            while True:
-                self._queue.get_nowait()
-        except queue.Empty:
-            pass
+    @staticmethod
+    def _blocks(seq: PieceSeq, pos: int, end: int, loop: bool, loop_a: int, loop_b: int) -> Iterator[tuple[np.ndarray, int]]:
+        """(block, first frame) from `pos` to the end, wrapping at the loop end while looping."""
+        stop_at = loop_b if loop else end
+        while True:
+            if pos >= stop_at:
+                if loop:
+                    pos = loop_a
+                    continue
+                return
+            n = min(BLOCK, stop_at - pos)
+            block = seq.read(pos, pos + n)
+            if block.shape[1] == 1:
+                block = np.repeat(block, 2, axis=1)
+            yield block, pos
+            pos += n
 
-    def _spawn_feeder(self, from_frame: int) -> None:
+    def _begin_feed(self, from_frame: int) -> None:
+        """Start a new run of blocks at `from_frame` and make the sound card take it from the next callback on.
+
+        The first few blocks are read here, so the new queue is already full when it is switched in. The old feeder
+        notices the new generation and quits; whatever it had queued is simply never heard."""
         self._gen += 1
-        self._drain()
+        gen = self._gen
+        q: queue.Queue = queue.Queue(maxsize=QUEUE_BLOCKS)
+        blocks = self._blocks(self._seq, from_frame, self._end, self._loop, self._loop_a, self._loop_b)
+        finished = False
+        for _ in range(PREFILL_BLOCKS):
+            item = next(blocks, None)
+            if item is None:
+                q.put_nowait((gen, None, 0))
+                finished = True
+                break
+            q.put_nowait((gen, item[0], item[1]))
         self._ended = False
-        threading.Thread(target=self._feed, args=(self._gen, self._seq, from_frame, self._end, self._loop,
-                                                  self._loop_a, self._loop_b), daemon=True).start()
+        with self._pos_lock:                                     # the queue and the position change together, or a callback
+            self._feedq = (gen, q)                               # already under way cannot write its old position over the new one
+            self._pos_src = from_frame
+        if not finished:
+            threading.Thread(target=self._feed, args=(gen, q, blocks), daemon=True).start()
 
     def pause(self) -> None:
         if self._state == "playing":
@@ -147,14 +197,38 @@ class Player:
             if self._seq is None or self._state == "stopped":
                 return
             frame = max(0, min(frame, self._end - 1))
-            self._pos_src = frame
-            self._spawn_feeder(frame)
+            self._begin_feed(frame)
+
+    def swap(self, seq: PieceSeq, *, frame: Optional[int] = None, end: Optional[int] = None,
+             loop_range: Optional[tuple[int, int]] = None) -> bool:
+        """Carry on playing `seq` (a newer version of the audio) from `frame`, or from where the sound card is now.
+
+        `end` and `loop_range` default to the whole of `seq`. Returns False when nothing was playing."""
+        with self._lock:
+            if self._seq is None or self._state == "stopped":
+                return False
+            total = seq.frames
+            frame = self._pos_src if frame is None else frame
+            end = total if end is None else min(end, total)
+            if end <= 0:
+                return False
+            frame = max(0, min(frame, end - 1))
+            self._seq = seq
+            self._end = end
+            self._start = frame                                  # the new lower bound for `position`
+            if self._loop:
+                self._loop_a, self._loop_b = loop_range if loop_range else (0, end)
+                if not 0 <= self._loop_a < self._loop_b <= end:
+                    self._loop_a, self._loop_b = 0, end
+            self._begin_feed(frame)                              # also sets the position
+            return True
 
     def stop(self) -> int:
         """Stop playback; returns the frame where it stopped."""
         with self._lock:
             pos = self.position if self._state != "stopped" else self._pos_src
             self._gen += 1
+            self._feedq = (self._gen, queue.Queue(maxsize=1))        # whatever was queued is stale now
             stream, self._stream = self._stream, None
             self._state = "stopped"
             self._paused = False
@@ -168,53 +242,43 @@ class Player:
                 stream.close()
             except Exception:
                 pass
-        self._drain()
         return pos
 
     # ------------------------------------------------------------ threads
-    def _feed(self, gen: int, seq: PieceSeq, pos: int, end: int, loop: bool, loop_a: int, loop_b: int) -> None:
-        stop_at = loop_b if loop else end
-        while gen == self._gen:
-            if pos >= stop_at:
-                if loop:
-                    pos = loop_a
-                    continue
-                self._put(gen, (gen, None, 0))
+    def _feed(self, gen: int, q: queue.Queue, blocks: Iterator[tuple[np.ndarray, int]]) -> None:
+        for block, pos in blocks:
+            if not self._put(gen, q, (gen, block, pos)):
                 return
-            n = min(BLOCK, stop_at - pos)
-            block = seq.read(pos, pos + n)
-            if block.shape[1] == 1:
-                block = np.repeat(block, 2, axis=1)
-            if not self._put(gen, (gen, block, pos)):
-                return
-            pos += n
+        self._put(gen, q, (gen, None, 0))
 
-    def _put(self, gen: int, item) -> bool:
+    def _put(self, gen: int, q: queue.Queue, item) -> bool:
         while gen == self._gen:
             try:
-                self._queue.put(item, timeout=0.05)
+                q.put(item, timeout=0.05)
                 return True
             except queue.Full:
                 continue
         return False
 
     def _callback(self, outdata, frames, time_info, status) -> None:
-        # The audio thread owns the "current block" state; other threads only bump self._gen,
-        # which makes the block stale. Work on locals so a concurrent stop/seek cannot pull it away.
+        # The audio thread owns the "current block" state; other threads only replace self._feedq, which makes the
+        # block stale. Work on locals so a concurrent stop/seek/swap cannot pull it away.
         outdata[:] = 0
         if self._paused:
             return
+        live_gen, q = self._feedq
         cur, off, src, cgen = self._cur, self._cur_off, self._cur_src, self._cur_gen
-        if cur is not None and cgen != self._gen:
+        if cur is not None and cgen != live_gen:
             cur = None
         filled = 0
+        pos = None
         while filled < frames:
             if cur is None:
                 try:
-                    gen, block, start = self._queue.get_nowait()
+                    gen, block, start = q.get_nowait()
                 except queue.Empty:
                     break
-                if gen != self._gen:
+                if gen != live_gen:
                     continue
                 if block is None:
                     self._ended = True
@@ -224,15 +288,20 @@ class Player:
             outdata[filled:filled + take] = cur[off:off + take]
             off += take
             filled += take
-            self._pos_src = src + off
+            pos = src + off
             if off >= len(cur):
                 cur = None
+        if pos is not None:
+            with self._pos_lock:
+                if self._feedq[0] == live_gen:                    # otherwise a seek or swap just took over the position
+                    self._pos_src = pos
         self._cur, self._cur_off, self._cur_src, self._cur_gen = cur, off, src, cgen
         if self.volume != 1.0:
             outdata *= self.volume
         np.maximum(self._peak, np.abs(outdata).max(axis=0), out=self._peak)
         if self._ended and filled < frames:
             raise sd.CallbackStop if sd is not None else StopIteration
+
     def _on_finished(self) -> None:
         if self._ended and self._state != "stopped":
             self._state = "stopped"

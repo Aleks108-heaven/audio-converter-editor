@@ -90,6 +90,8 @@ class Stage(QWidget):
     cursorChanged = Signal()
     viewChanged = Signal()
     seekRequested = Signal(int)
+    scrubRequested = Signal(int)             # pressed or dragged on the ruler: hear the audio at this frame
+    scrubEnded = Signal()
     contextMenuRequested = Signal(QPoint)
     envelopeChanged = Signal()
     openRequested = Signal()
@@ -928,7 +930,9 @@ class Stage(QWidget):
             self._drag = {"kind": "select", "anchor": anchor, "moved": True}
             self.set_selection(anchor, frame)
             return
-        self._drag = {"kind": "select", "anchor": frame, "moved": False, "x0": pos.x()}
+        self._drag = {"kind": "select", "anchor": frame, "moved": False, "x0": pos.x(), "scrub": region == "ruler"}
+        if region == "ruler":
+            self.scrubRequested.emit(frame)
 
     def _marker_at(self, pos: QPointF) -> Optional[int]:
         rr = self.ruler_rect()
@@ -1014,6 +1018,8 @@ class Stage(QWidget):
             d["moved"] = True
             frame = self._snap(self.x_to_frame(pos.x()))
             self.set_selection(d["anchor"], frame)
+            if d.get("scrub"):
+                self.scrubRequested.emit(frame)
             self._edge_autoscroll(pos.x(), lr)
         self.update()
 
@@ -1070,6 +1076,8 @@ class Stage(QWidget):
         self._autoscroll_speed = 0.0
         if d is None or self.doc is None:
             return
+        if d.get("scrub"):
+            self.scrubEnded.emit()               # before the cursor moves, so releasing never reads as a seek
         if d["kind"] == "pan":
             self.setCursor(Qt.CursorShape.IBeamCursor)
         if d["kind"] == "select" and not d["moved"]:

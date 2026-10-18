@@ -213,6 +213,104 @@ def test_editing_the_document_does_not_disturb_playback(player):
     np.testing.assert_array_equal(played_frames(FakeOutput.instances[-1]), original)
 
 
+class ManualOutput(FakeOutput):
+    """A card that only plays when the test pulls a block, so what comes out is exact and never timing-dependent."""
+
+    def start(self):
+        self.active = True
+
+    def pull(self, frames: int) -> np.ndarray:
+        out = np.zeros((frames, self.channels), np.float32)
+        self.cb(out, frames, None, None)
+        return out
+
+
+@pytest.fixture
+def manual():
+    ManualOutput.instances.clear()
+    p = Player(stream_factory=ManualOutput)
+    yield p
+    p.stop()
+
+
+def test_swap_carries_on_from_where_the_card_is_with_no_gap(manual):
+    doc = ramp_doc(20000)
+    manual.play(doc.snapshot())
+    card = ManualOutput.instances[-1]
+    heard = card.pull(1000)
+    np.testing.assert_array_equal(heard, doc.read(0, 1000))
+    doc.delete(2000, 6000)                                   # an edit ahead of the playhead
+    assert manual.swap(doc.snapshot())
+    after = card.pull(3000)
+    assert (np.abs(after).max(axis=1) > 0).all()             # not one silent frame while the new audio took over
+    np.testing.assert_array_equal(after, doc.read(1000, 4000))
+
+
+def test_swap_can_jump_and_shortens_the_end(manual):
+    doc = ramp_doc(20000)
+    manual.play(doc.snapshot())
+    card = ManualOutput.instances[-1]
+    card.pull(500)
+    short = doc.snapshot()
+    doc.delete(10000, 20000)
+    assert manual.swap(doc.snapshot(), frame=9000)
+    np.testing.assert_array_equal(card.pull(1000), doc.read(9000, 10000))
+    assert manual.end == 10000
+    assert short.frames == 20000                             # the snapshot being replaced was not touched
+
+
+def test_swap_does_nothing_when_nothing_is_playing(manual):
+    assert manual.swap(ramp_doc(100).snapshot()) is False
+    assert manual.sequence is None and manual.state == "stopped"
+
+
+def test_swap_while_paused_stays_paused_and_resumes_with_the_new_audio(manual):
+    doc = ramp_doc(20000)
+    manual.play(doc.snapshot())
+    card = ManualOutput.instances[-1]
+    card.pull(500)
+    manual.pause()
+    doc.delete(0, 5000)
+    assert manual.swap(doc.snapshot(), frame=0)
+    assert not card.pull(300).any() and manual.state == "paused"
+    manual.resume()
+    np.testing.assert_array_equal(card.pull(300), doc.read(0, 300))
+
+
+def test_sequence_is_what_is_playing(manual):
+    doc = ramp_doc(5000)
+    a, b = doc.snapshot(), doc.snapshot()
+    manual.play(a)
+    assert manual.sequence is a
+    manual.swap(b)
+    assert manual.sequence is b
+    manual.stop()
+    assert manual.sequence is None
+
+
+def test_seek_is_heard_at_once_even_with_audio_already_queued(manual):
+    doc = ramp_doc(40000)
+    manual.play(doc.snapshot())
+    card = ManualOutput.instances[-1]
+    card.pull(700)
+    assert wait_for(lambda: manual._feedq[1].qsize() >= 8)    # a good stretch of the old position is waiting in the queue
+    manual.seek(30000)
+    np.testing.assert_array_equal(card.pull(500), doc.read(30000, 30500))
+
+
+def test_swap_while_looping_keeps_looping_inside_the_new_range(manual):
+    doc = ramp_doc(6000)
+    manual.play(doc.snapshot(), start=0, end=6000, loop=True, loop_range=(1000, 2000))
+    card = ManualOutput.instances[-1]
+    card.pull(100)
+    doc.delete(0, 500)
+    assert manual.swap(doc.snapshot(), frame=600, loop_range=(500, 1500))
+    assert manual.loop_range == (500, 1500)
+    heard = card.pull(1200)
+    np.testing.assert_array_equal(heard[:900], doc.read(600, 1500))
+    np.testing.assert_array_equal(heard[900:], doc.read(500, 800))
+
+
 @pytest.mark.skipif(not sd.query_devices(), reason="no audio devices")
 def test_real_device_opens_and_plays_silence():
     doc = Document.from_source(Source.silence(int(0.25 * 44100), 44100, 2))

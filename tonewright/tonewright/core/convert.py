@@ -10,6 +10,7 @@ from typing import Callable, Iterable, Iterator, Optional
 
 import numpy as np
 
+from . import access
 from . import ffmpeg as ff
 from . import formats, tags as tagmod
 from .common import Cancelled, CancelToken, PauseToken, ProgressFn
@@ -304,6 +305,14 @@ def convert_all(items: list[ConvertItem], opts: ConvertOptions, *,
     return results
 
 
+def _reason(exc: BaseException) -> str:
+    """One line saying why a conversion failed. A file that could not be written gets the real reason (a missing
+    folder, no permission, Windows Security) in place of FFmpeg's bare "No such file or directory"."""
+    if isinstance(exc, ff.OutputError):
+        return access.one_line(access.diagnose(exc.path, exc.detail), exc.path.name)
+    return str(exc).strip().splitlines()[0] if str(exc).strip() else repr(exc)
+
+
 def _run_one(n: int, item: ConvertItem, opts: ConvertOptions, taken: set[Path], weight: float,
              done_w: float, total_w: float, on_item_progress, on_overall, cancel, pause) -> ItemResult:
     started = time.time()
@@ -324,7 +333,7 @@ def _run_one(n: int, item: ConvertItem, opts: ConvertOptions, taken: set[Path], 
     except Cancelled:
         return ItemResult(item, "cancelled", message="Cancelled")
     except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
-        return ItemResult(item, "error", message=str(exc).strip().splitlines()[0] if str(exc).strip() else repr(exc))
+        return ItemResult(item, "error", message=_reason(exc))
 
 
 def _run_merged(items, opts, on_item_progress, on_overall, on_result, cancel, pause) -> list[ItemResult]:
@@ -347,7 +356,7 @@ def _run_merged(items, opts, on_item_progress, on_overall, on_result, cancel, pa
     except Cancelled:
         results = [ItemResult(i, "cancelled", message="Cancelled") for i in items]
     except Exception as exc:  # noqa: BLE001
-        msg = str(exc).strip().splitlines()[0] if str(exc).strip() else repr(exc)
+        msg = _reason(exc)
         results = [ItemResult(i, "error", message=msg) for i in items]
     for n, res in enumerate(results):
         if on_result:

@@ -64,6 +64,46 @@ def slice_pieces(pieces: Sequence[Piece], a: int, b: int) -> list[Piece]:
     return out
 
 
+def _common_run(old: Sequence[Piece], new: Sequence[Piece], limit: int) -> int:
+    """How many frames, counted from the start, `old` and `new` have in common (same source, same place in it)."""
+    i = j = oi = oj = matched = 0
+    while i < len(old) and j < len(new) and matched < limit:
+        p, q = old[i], new[j]
+        if p.src is not q.src or p.start + oi != q.start + oj:
+            break
+        n = min(p.length - oi, q.length - oj)
+        matched += n
+        oi += n
+        oj += n
+        if oi == p.length:
+            i, oi = i + 1, 0
+        if oj == q.length:
+            j, oj = j + 1, 0
+    return min(matched, limit)
+
+
+def diff_range(old: Sequence[Piece], new: Sequence[Piece]) -> tuple[int, int, int]:
+    """What an edit changed: `(a, old_b, new_b)` means frames [a, old_b) of `old` became frames [a, new_b) of `new`
+    and everything before `a` and after those is the same audio. Equal sequences give `(n, n, n)`."""
+    old_n, new_n = sum(p.length for p in old), sum(p.length for p in new)
+    a = _common_run(old, new, min(old_n, new_n))
+    # the common ending is the common beginning of the same pieces read backwards
+    def flipped(pieces: Sequence[Piece]) -> list[Piece]:
+        return [Piece(p.src, -p.start - p.length, p.length) for p in reversed(pieces)]
+    tail = _common_run(flipped(old), flipped(new), min(old_n, new_n) - a)
+    return a, old_n - tail, new_n - tail
+
+
+def map_frame(frame: int, a: int, old_b: int, new_b: int) -> int:
+    """Where a position in the old audio is after the edit `diff_range` described."""
+    if frame <= a:
+        return frame
+    if frame >= old_b:
+        return frame + (new_b - old_b)
+    old_len, new_len = old_b - a, new_b - a
+    return frame if old_len == new_len else a + min(new_len, int((frame - a) * new_len / old_len))
+
+
 class PieceSeq:
     """Read access shared by Document, Clip and snapshots."""
 

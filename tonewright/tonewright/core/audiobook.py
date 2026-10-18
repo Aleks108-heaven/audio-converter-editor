@@ -1,7 +1,6 @@
 """Audiobooks: join files into one M4B with chapters, tags and a cover."""
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -253,7 +252,7 @@ def create_audiobook(parts: list[Part], opts: BookOptions, out_path: Path, *,
         ff.run_capture(["-y", "-v", "error", "-i", str(work), "-i", str(meta), "-map", "0:a",
                         "-map_metadata", "1", "-map_chapters", "1", "-c", "copy",
                         "-movflags", "+faststart", "-f", "ipod", str(final_tmp)], cancel=cancel)
-        os.replace(final_tmp, out_path)
+        ff.move_into_place(final_tmp, out_path)
         _finish_tags(out_path, opts)
     finally:
         for tmp in (work, meta, final_tmp):

@@ -1,6 +1,8 @@
 """Editing logic that connects the widgets to the core: files, clipboard, effects, tools, playback."""
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -9,12 +11,13 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (QDialog, QFileDialog, QInputDialog, QMainWindow, QMessageBox)
 
+from .. import paths as paths_module
 from ..audio.devices import AudioDeviceError
-from ..core import analysis, effects as fx
+from ..core import access, analysis, effects as fx
 from ..core import ffmpeg, formats, generate, ops
 from ..core import tags as tagmod
 from ..core.convert import ConvertItem, ConvertOptions, convert_item
-from ..core.document import Clip, Document, Marker
+from ..core.document import Clip, Document, Marker, diff_range, map_frame
 from ..core.effects import Effect
 from ..core.formats import EncodeSettings
 from ..core.generate import ToneSpec
@@ -40,6 +43,8 @@ EXT_TO_FORMAT = {".mp3": "mp3", ".m4a": "m4a", ".m4b": "m4b", ".aac": "aac", ".o
                  ".opus": "opus", ".wma": "wma", ".flac": "flac", ".wav": "wav", ".aiff": "aiff", ".aif": "aiff",
                  ".mp2": "mp2", ".amr": "amr", ".awb": "amrwb"}
 TARGETS = [("Insert at the cursor", "cursor"), ("Replace the selection", "selection"), ("Create a new file", "new")]
+EDIT_PREROLL = 1.5          # seconds of the old sound played before a cut or a paste, so the join is heard
+SCRUB_INTERVAL = 0.03       # seconds between jumps while dragging on the ruler
 
 
 def default_settings_for(path: Optional[Path], meta: dict) -> EncodeSettings:
@@ -78,6 +83,8 @@ class Controller(QObject):
         self.last_effect: Optional[tuple[str, dict]] = None
         self._last_params: dict[str, dict] = {}
         self._preview_active = False
+        self._scrubbing = False
+        self._scrub_at = 0.0
         self._play_origin = 0
         self._confirmed_overwrite: set[int] = set()
         self.noise_store: dict = {}
@@ -103,8 +110,51 @@ class Controller(QObject):
         self.statusMessage.emit(tr(text))
 
     def error(self, title: str, exc: BaseException | str) -> None:
+        if isinstance(exc, ffmpeg.OutputError):
+            self._show_write_problem(title, access.diagnose(exc.path, exc.detail))
+            return
+        if isinstance(exc, ffmpeg.FFmpegError) and exc.detail:
+            exc = exc.detail
         text = tr(str(exc).strip() or repr(exc))
         QMessageBox.warning(self.win, tr(title), text if len(text) < 900 else text[:900] + "…")
+
+    def _show_write_problem(self, title: str, problem: access.WriteProblem) -> None:
+        """A file could not be written. Say why, and for Windows Security (Controlled folder access) say what to
+        allow and offer to open the page where that is done."""
+        folder = problem.folder
+        blocked = problem.kind in ("windows-security", "ffmpeg-blocked")
+        box = QMessageBox(self.win)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(tr(title))
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        if problem.kind == "folder-missing":
+            box.setText(tr(f"The folder {folder} does not exist."))
+            box.setInformativeText(tr("Choose another folder, or create this one."))
+        elif blocked:
+            box.setText(tr(f"Windows Security blocked Tonewright from saving to {folder}."))
+            box.setInformativeText(
+                tr("This is Controlled folder access, the ransomware protection in Windows Security. It only lets programs "
+                   "you have approved change files in Documents, Music, Videos, Pictures and Desktop.\n\nTo allow "
+                   "Tonewright: open Windows Security, then Virus & threat protection > Ransomware protection > Allow an "
+                   "app through Controlled folder access > Add an allowed app > Browse all apps, and add these two "
+                   "programs:") + "\n\n" + "\n".join(problem.programs)
+                + "\n\n" + tr("Then save again. You can also save into a folder that is not protected."))
+        elif problem.kind == "not-writable":
+            box.setText(tr(f"Tonewright is not allowed to write to {folder}."))
+            hint = (tr("On a Mac, allow it under System Settings > Privacy & Security > Files and Folders.")
+                    if paths_module.IS_MAC else tr("Check that the folder is not read-only, or choose another folder."))
+            box.setInformativeText((problem.reason + "\n\n" if problem.reason else "") + hint)
+        else:
+            box.setText(tr(f"Could not write to {folder}."))
+            box.setInformativeText((problem.reason or "").strip()[:700])
+        open_security = box.addButton(tr("Open Windows Security"), QMessageBox.ButtonRole.ActionRole) if blocked else None
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.exec()
+        if open_security is not None and box.clickedButton() is open_security:
+            try:
+                os.startfile(access.CFA_LINK)  # type: ignore[attr-defined]
+            except (AttributeError, OSError):
+                pass
 
     def _range(self) -> tuple[int, int]:
         doc = self.doc
@@ -241,10 +291,39 @@ class Controller(QObject):
         item.duration = item.doc.duration if item.doc else item.duration
         self.state.touched(item)
         if item is self.state.current:
-            if kind in ("content", "format"):
+            if kind == "format":
                 self.stop_playback()
+            elif kind == "content":
+                self._follow_edit()
             self._sync_all()
             self._refresh()
+
+    def _follow_edit(self) -> None:
+        """The audio changed (a cut, a paste, an effect, an undo...). If it is playing, carry on with the new audio
+        instead of going silent, so every edit can be heard as it is made.
+
+        An edit that keeps the length (an effect, silence) carries on from the same place. One that cuts something
+        out or puts something in restarts a moment before it, so the join is the first thing you hear."""
+        player, doc = self.player, self.doc
+        old = player.sequence
+        if self._preview_active or self._scrubbing or old is None or doc is None:
+            return
+        new = doc.snapshot()
+        if new.frames == 0 or new.sr != old.sr:
+            self.stop_playback()
+            return
+        a, old_b, new_b = diff_range(old._pieces(), new._pieces())
+        sr = new.sr
+        if old_b - a != new_b - a:
+            frame = max(0, a - int(EDIT_PREROLL * sr))
+            end = None
+        else:
+            frame = map_frame(player.position, a, old_b, new_b)
+            end = None if player.end >= old.frames else map_frame(player.end, a, old_b, new_b)
+        loop = player.loop_range
+        loop = (map_frame(loop[0], a, old_b, new_b), map_frame(loop[1], a, old_b, new_b)) if loop else None
+        if player.swap(new, frame=frame, end=end, loop_range=loop):
+            self.stage.set_playhead(player.position)
 
     def _sync_all(self) -> None:
         self._sync_selection()
@@ -325,14 +404,10 @@ class Controller(QObject):
                 self.player.seek(frame)
 
     # ================================================================ clipboard and edits
-    def _before_edit(self) -> None:
-        self.stop_playback()
-
     def cut(self) -> None:
         doc, sel = self.doc, self.stage.selection
         if doc is None or not sel:
             return
-        self._before_edit()
         self.state.clipboard = doc.cut(*sel)
         self.stage.clear_selection()
         self.stage.set_cursor(sel[0])
@@ -350,7 +425,6 @@ class Controller(QObject):
         doc, sel = self.doc, self.stage.selection
         if doc is None or not sel:
             return
-        self._before_edit()
         doc.delete(*sel)
         self.stage.clear_selection()
         self.stage.set_cursor(sel[0])
@@ -359,7 +433,6 @@ class Controller(QObject):
         doc, sel = self.doc, self.stage.selection
         if doc is None or not sel:
             return
-        self._before_edit()
         doc.crop(*sel)
         self.stage.clear_selection()
         self.stage.set_cursor(0)
@@ -369,7 +442,6 @@ class Controller(QObject):
         doc, sel = self.doc, self.stage.selection
         if doc is None or not sel:
             return
-        self._before_edit()
         doc.silence(*sel)
 
     def _matching_clip(self, clip: Clip, doc: Document) -> Optional[Clip]:
@@ -388,7 +460,6 @@ class Controller(QObject):
         doc, clip = self.doc, self.state.clipboard
         if doc is None or clip is None:
             return
-        self._before_edit()
         try:
             clip = self._matching_clip(clip, doc)
         except Exception as exc:  # noqa: BLE001
@@ -466,7 +537,6 @@ class Controller(QObject):
 
     def _mix_clip(self, clip: Clip, vals: dict) -> None:
         doc = self.doc
-        self._before_edit()
         try:
             clip = self._matching_clip(clip, doc)
         except Exception as exc:  # noqa: BLE001
@@ -499,31 +569,26 @@ class Controller(QObject):
     # ================================================================ undo / redo / markers
     def undo(self) -> None:
         if self.doc and self.doc.can_undo:
-            self._before_edit()
             self.doc.undo()
             self._clamp_after_history()
 
     def redo(self) -> None:
         if self.doc and self.doc.can_redo:
-            self._before_edit()
             self.doc.redo()
             self._clamp_after_history()
 
     def undo_steps(self, n: int) -> None:
         if self.doc:
-            self._before_edit()
             self.doc.undo(n)
             self._clamp_after_history()
 
     def redo_steps(self, n: int) -> None:
         if self.doc:
-            self._before_edit()
             self.doc.redo(n)
             self._clamp_after_history()
 
     def history_jump(self, index: int) -> None:
         if self.doc:
-            self._before_edit()
             self.doc.goto_history(index)
             self._clamp_after_history()
 
@@ -642,7 +707,6 @@ class Controller(QObject):
         if effect.min_channels > doc.channels:
             self.error(tr(effect.name), tr(f"{tr(effect.name)} needs a stereo file."))
             return
-        self._before_edit()
         ctx = self._effect_context(effect)
         dlg = EffectDialog(effect, params if params is not None else self._last_params.get(effect_id), ctx, self.win)
         accepted = dlg.exec() == QDialog.DialogCode.Accepted
@@ -658,7 +722,6 @@ class Controller(QObject):
         doc = self.doc
         if doc is None:
             return
-        self._before_edit()
         a, b = self._range()
         had_selection = self.stage.selection is not None
         snap = doc.snapshot()
@@ -715,7 +778,6 @@ class Controller(QObject):
         pts = [list(p) for p in st.env_points]
         env = fx.get("envelope")
         snap = doc.snapshot()
-        self._before_edit()
 
         def job(progress, cancel):
             clip = fx.run_effect(env, {"points": pts}, snap, a, b, progress=progress, cancel=cancel)
@@ -760,7 +822,6 @@ class Controller(QObject):
         if target == "new" or doc is None:
             self._add_document(Document.from_source(src, name=self._unique_name(tr(new_name))))
             return
-        self._before_edit()
         if (src.sr, src.channels) != (doc.sr, doc.channels):
             ok, conv = run_task(self.win, tr("Converting"), lambda progress, cancel: ops.convert_format(
                 Clip.from_source(src), doc.sr, doc.channels, progress=progress, cancel=cancel), delay_ms=300)
@@ -923,7 +984,6 @@ class Controller(QObject):
         if not runs:
             self.info(tr("No silences found with those settings"))
             return
-        self._before_edit()
         if v["action"] == "markers":
             marks = list(doc.markers) + [Marker(a + int(((s + e) / 2) * sr), tr(f"Pause {i}")) for i, (s, e) in enumerate(runs, 1)]
             doc.set_markers(marks, tr("Mark silences"))
@@ -962,7 +1022,6 @@ class Controller(QObject):
         v = dlg.values()
         if (v["sr"], v["channels"]) == (doc.sr, doc.channels):
             return
-        self._before_edit()
         snap = doc.snapshot()
 
         def job(progress, cancel):
@@ -1000,7 +1059,7 @@ class Controller(QObject):
         try:
             ok, _ = run_task(self.win, tr("Saving"), job, message=tr(f"Writing {path.name}…"), delay_ms=250)
         except Exception as exc:  # noqa: BLE001
-            self.error(tr("Save"), exc.detail if isinstance(exc, ffmpeg.FFmpegError) and exc.detail else exc)
+            self.error(tr("Save"), exc)
             return False
         return bool(ok)
 
@@ -1169,6 +1228,7 @@ class Controller(QObject):
         self._refresh_play_state()
 
     def stop_playback(self) -> None:
+        self._scrubbing = False
         if self._preview_active:
             self._preview_active = False
             self.player.stop()
@@ -1185,6 +1245,37 @@ class Controller(QObject):
     def seek_requested(self, frame: int) -> None:
         if self.player.state != "stopped" and not self._preview_active:
             self.player.seek(frame)
+
+    def scrub(self, frame: int) -> None:
+        """Press and drag on the ruler: hear the audio under the pointer, to find a cut by ear. Does nothing while the
+        file is already playing (a click on the ruler then just moves the playhead, as it always did)."""
+        doc = self.doc
+        if doc is None or doc.frames == 0:
+            return
+        frame = max(0, min(frame, doc.frames - 1))
+        if self._scrubbing and self.player.state == "stopped":
+            self._scrubbing = False                          # it ran off the end: the next press starts it again
+        if self._scrubbing:
+            now = time.monotonic()
+            if now - self._scrub_at >= SCRUB_INTERVAL:
+                self._scrub_at = now
+                self.player.seek(frame)
+            return
+        if self.player.state != "stopped" or self._preview_active:
+            return
+        self.player.volume = float(self.state.settings.get("volume", 0.9))
+        try:
+            self.player.play(doc.snapshot(), frame, doc.frames)
+        except AudioDeviceError:
+            return                                           # scrubbing is a convenience: say nothing if there is no sound card
+        self._scrubbing = True
+        self._scrub_at = time.monotonic()
+        self.stage.set_playhead(frame)
+        self._refresh_play_state()
+
+    def end_scrub(self) -> None:
+        if self._scrubbing:
+            self.stop_playback()
 
     def set_loop(self, on: bool) -> None:
         self.loop_on = on

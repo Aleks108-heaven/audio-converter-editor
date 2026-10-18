@@ -330,29 +330,157 @@ def test_an_effect_needs_some_audio_first(mix):
 
 
 # ------------------------------------------------------------------ playback
-def test_play_renders_the_mix_and_pauses_and_stops(mix, qapp):
+def paused_mix(mix, qapp, at: int = SR // 2):
+    """The mix playing, then frozen at `at`, so what an edit does to it can be looked at without racing the clock."""
+    mix.mix.play(at)
+    assert wait_until(qapp, lambda: mix.mix.player.position > at)
+    mix.mix.toggle_play()
+    assert mix.mix.player.state == "paused"
+    mix.mix.player.seek(at)
+    return mix.mix.player
+
+
+def heard_after(stream, n_before: int, frames: int = 4000) -> np.ndarray:
+    """Whatever the fake sound card played from block `n_before` on, once at least `frames` of it exist."""
+    assert wait_until(test_ui.QApplication.instance(), lambda: sum(len(b) for b in stream.played[n_before:]) >= frames)
+    return np.concatenate(stream.played[n_before:])
+
+
+def test_play_starts_at_once_and_pauses_and_stops(mix, qapp):
     mix.mix.add_files(mix.files[:2])
     mix.canvas.place_playhead(SR // 2)
     mix.mix.play()
     assert mix.mix.player.state == "playing" and mix.mix_page.play_btn.isEnabled()
     assert wait_until(qapp, lambda: len(FakeOutput.instances[-1].played) > 50)
-    assert mix.mix._rendered is not None and mix.mix._rendered[0] == mix.mix.project.version
-    cached = mix.mix._rendered[1]
+    heard = FakeOutput.instances[-1].audio()[:3000]                      # no rendering first: the lines are mixed as it plays
+    np.testing.assert_allclose(heard / mix.mix.player.volume, mix.mix.project.render().read(SR // 2, SR // 2 + 3000), atol=1e-6)
     mix.mix.toggle_play()
     assert mix.mix.player.state == "paused"
     mix.mix.stop()
     assert mix.mix.player.state == "stopped"
-    mix.mix.play()                                           # unchanged mix: no second render
-    assert mix.mix._rendered[1] is cached
+    mix.mix.play()
+    assert mix.mix.player.state == "playing"
     mix.mix.stop()
 
 
-def test_editing_stops_playback_and_the_playhead_follows(mix, qapp):
+def test_editing_keeps_the_mix_playing_and_the_change_is_heard(mix, qapp):
+    mix.mix.add_files(mix.files[:2])
+    player = paused_mix(mix, qapp)
+    before = player.sequence
+    p = mix.mix.project
+    stream = FakeOutput.instances[-1]
+    mix.mix.add_line()                                                   # any edit used to stop the mix
+    assert player.state == "paused"
+    assert wait_until(qapp, lambda: player.sequence is not before)       # a fresh copy of the mix took over
+    mix.board._mute(p.lines[0].id, True)
+    mix.board._mute(p.lines[1].id, True)
+    assert wait_until(qapp, lambda: player.sequence.read(SR // 2, SR // 2 + 100).max() == 0.0)
+    mark = len(stream.played)
+    mix.mix.toggle_play()
+    assert player.state == "playing"
+    assert not heard_after(stream, mark).any()                           # both lines muted: silence
+    mix.board._mute(p.lines[0].id, False)                                # and un-muting is heard while it plays
+    mark = len(stream.played)
+    assert wait_until(qapp, lambda: heard_after(stream, mark, 2000).any())
+    mix.mix.stop()
+
+
+def test_dragging_a_clip_while_playing_swaps_the_mix_in_as_it_moves(mix, qapp):
     mix.mix.add_files(mix.files[:1])
+    player = paused_mix(mix, qapp, 2 * SR)
+    clip = mix.mix.project.clips[0]
+    before = player.sequence
+    x, y = centre_of(mix.canvas, clip)
+    press(mix.canvas, x, y)
+    move(mix.canvas, x, y)
+    move(mix.canvas, x + 2 * mix.canvas.px_per_sec, y)
+    assert wait_until(qapp, lambda: player.sequence is not before)
+    assert clip.start > 0 and player.sequence.frames == mix.mix.project.total_frames > 3 * SR
+    release(mix.canvas, x + 2 * mix.canvas.px_per_sec, y)
+    assert player.state == "paused"
+    mix.mix.stop()
+
+
+def test_splitting_while_playing_carries_on_from_the_playhead(mix, qapp):
+    mix.mix.add_files(mix.files[:1])
+    player = paused_mix(mix, qapp, SR)
+    mix.canvas.set_playhead(SR)
+    mix.mix.split_at_playhead()
+    assert len(mix.mix.project.clips) == 2 and player.state == "paused"
+    assert wait_until(qapp, lambda: abs(player.position - SR) < 400)
+    mix.mix.stop()
+
+
+def test_deleting_the_last_clip_while_playing_ends_it_and_undo_brings_it_back(mix, qapp):
+    mix.mix.add_files(mix.files[:1])
+    player = paused_mix(mix, qapp)
+    mix.mix.delete_selected()
+    assert wait_until(qapp, lambda: mix.mix.project.empty and player.state == "stopped")      # nothing left to play
+    mix.mix.undo()
+    assert len(mix.mix.project.clips) == 1
     mix.mix.play()
-    assert wait_until(qapp, lambda: mix.canvas.playhead > 0)
-    mix.mix.add_line()
-    assert mix.mix.player.state == "stopped"
+    assert player.state == "playing"
+    mix.mix.stop()
+
+
+def test_an_effect_added_while_playing_is_heard_when_playing_resumes(mix, qapp):
+    mix.mix.add_files(mix.files[:1])
+    mix.script.dialog_hooks["EffectDialog"] = lambda d: d.controls["gain"].set_value(-20.0) or d.controls["prevent_clipping"].set_value(False)
+    mix.mix.play(SR // 2)
+    assert wait_until(qapp, lambda: mix.mix.player.position > SR // 2)
+    mix.mix.add_effect("amplify", SR // 2)
+    player, stream = mix.mix.player, FakeOutput.instances[-1]
+    assert player.state == "playing" and len(mix.mix.project.effects) == 1       # playing went on once the dialog closed
+    assert wait_until(qapp, lambda: sum(len(b) for b in stream.played) >= 3000)
+    start = player.start
+    assert start >= SR // 2                                                      # picked up where it was, inside the effect
+    plain = mix.mix.project.render(effects=False).read(start, start + 3000)
+    np.testing.assert_allclose(stream.audio()[:3000] / player.volume, plain * 0.1, atol=1e-4)      # -20 dB from the very first sample
+    mix.mix.stop()
+
+
+def test_cancelling_the_effect_dialog_leaves_the_mix_playing(mix, qapp):
+    mix.mix.add_files(mix.files[:1])
+    mix.mix.play(SR // 2)
+    assert wait_until(qapp, lambda: mix.mix.player.position > SR // 2)
+    mix.script.dialog_hooks["EffectDialog"] = lambda d: False
+    mix.mix.add_effect("amplify", SR // 2)
+    assert mix.mix.player.state == "playing" and mix.mix.project.effects == []
+    mix.mix.stop()
+
+
+def test_dragging_on_the_ruler_plays_what_is_under_the_pointer(mix, qapp):
+    mix.mix.add_files(mix.files[:2])
+    ruler, player = mix.board.ruler, mix.mix.player
+    def at(seconds, kind):
+        x = (seconds - mix.canvas.t0) * mix.canvas.px_per_sec
+        ev = QMouseEvent(kind, QPointF(x, 5), QPointF(x, 5), Qt.MouseButton.LeftButton,
+                         Qt.MouseButton.NoButton if kind == QEvent.Type.MouseButtonRelease else Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.NoModifier)
+        {QEvent.Type.MouseButtonPress: ruler.mousePressEvent, QEvent.Type.MouseMove: ruler.mouseMoveEvent,
+         QEvent.Type.MouseButtonRelease: ruler.mouseReleaseEvent}[kind](ev)
+    at(1.0, QEvent.Type.MouseButtonPress)
+    assert player.state == "playing" and mix.mix._scrubbing
+    assert abs(player.position - SR) < SR // 10
+    test_ui.pump(qapp, 80)
+    at(2.0, QEvent.Type.MouseMove)
+    assert wait_until(qapp, lambda: abs(player.position - 2 * SR) < SR // 5)
+    at(2.0, QEvent.Type.MouseButtonRelease)
+    assert player.state == "stopped" and not mix.mix._scrubbing
+
+
+def test_clicking_the_ruler_while_playing_just_moves_the_playhead(mix, qapp):
+    mix.mix.add_files(mix.files[:1])
+    mix.mix.play(0)
+    ruler = mix.board.ruler
+    x = 1.5 * mix.canvas.px_per_sec
+    ruler.mousePressEvent(QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(x, 5), QPointF(x, 5), Qt.MouseButton.LeftButton,
+                                      Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    assert not mix.mix._scrubbing
+    ruler.mouseReleaseEvent(QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(x, 5), QPointF(x, 5), Qt.MouseButton.LeftButton,
+                                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+    assert mix.mix.player.state == "playing"                             # releasing did not stop the real playback
+    mix.mix.stop()
 
 
 def test_space_escape_home_end_and_undo_follow_the_mix_in_this_mode(mix, qapp):

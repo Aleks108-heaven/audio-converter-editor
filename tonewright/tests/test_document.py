@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tonewright.core.document import Clip, Document, Marker
+from tonewright.core.document import Clip, Document, Marker, diff_range, map_frame
 from tonewright.core.source import Source, SourceWriter
 
 SR = 8000
@@ -11,6 +11,66 @@ SR = 8000
 
 def make_doc(arr: np.ndarray) -> Document:
     return Document.from_source(Source.from_array(arr, SR))
+
+
+def _ramp_doc(n: int = 1000) -> Document:
+    return make_doc(np.arange(n, dtype=np.float32)[:, None])
+
+
+def test_diff_range_finds_a_cut_a_paste_and_a_replacement():
+    doc = _ramp_doc()
+    before = doc.snapshot()
+    doc.delete(300, 450)
+    assert diff_range(before._pieces(), doc._pieces()) == (300, 450, 300)
+    cut = doc.snapshot()
+    doc.insert(100, Clip.from_source(Source.from_array(np.zeros((40, 1), np.float32), SR)))
+    assert diff_range(cut._pieces(), doc._pieces()) == (100, 100, 140)
+    pasted = doc.snapshot()
+    doc.replace_with_source(500, 520, Source.from_array(np.ones((60, 1), np.float32), SR), "Replace")
+    assert diff_range(pasted._pieces(), doc._pieces()) == (500, 520, 560)
+
+
+def test_diff_range_works_backwards_for_undo_and_for_untouched_audio():
+    doc = _ramp_doc()
+    before = doc.snapshot()
+    doc.delete(0, 10)
+    doc.delete(900, 990)
+    assert diff_range(doc._pieces(), before._pieces())[0] == 0
+    after = doc.snapshot()
+    doc.undo(2)
+    assert diff_range(after._pieces(), doc._pieces()) == (0, 900, 1000)      # both ends moved: nothing is common
+    same = doc.snapshot()
+    assert diff_range(before._pieces(), same._pieces()) == (1000, 1000, 1000)
+    assert diff_range([], []) == (0, 0, 0)
+
+
+def test_diff_range_matches_what_really_changed_for_random_edits():
+    rng = np.random.default_rng(3)
+    doc = make_doc(rng.standard_normal((5000, 1)).astype(np.float32))
+    for _ in range(60):
+        n = doc.frames
+        a = int(rng.integers(0, n))
+        b = int(rng.integers(a, min(n, a + 400) + 1))
+        before = doc.snapshot()
+        flat_before = doc.read(0, n)
+        if rng.random() < 0.5:
+            doc.delete(a, b)
+        else:
+            doc.insert(int(rng.integers(0, n + 1)), doc.copy(a, b))
+        flat_after = doc.read(0, doc.frames)
+        lo, old_b, new_b = diff_range(before._pieces(), doc._pieces())
+        np.testing.assert_array_equal(flat_before[:lo], flat_after[:lo])
+        np.testing.assert_array_equal(flat_before[old_b:], flat_after[new_b:])
+        assert old_b - new_b == n - doc.frames
+
+
+def test_map_frame_follows_the_audio_through_an_edit():
+    assert map_frame(100, 300, 450, 300) == 100            # before the edit: unchanged
+    assert map_frame(700, 300, 450, 300) == 550            # after a cut: moves back by what was cut
+    assert map_frame(350, 300, 450, 300) == 300            # inside what was cut: the join
+    assert map_frame(700, 100, 100, 140) == 740            # after an insertion: moves on
+    assert map_frame(510, 500, 520, 520) == 510            # an effect on a range keeps the position inside it
+    assert map_frame(510, 500, 520, 560) == 530            # a replacement of another length: in proportion
 
 
 def test_history_limit_drops_oldest_but_stays_consistent(monkeypatch):
@@ -216,6 +276,35 @@ def test_peaks_find_every_spike_at_all_zooms():
             else:
                 assert mn[ch, lo:hi].min() < -0.99, (width, f)
         assert mx.max() <= flat.max() + 1e-6 and mn.min() >= flat.min() - 1e-6
+
+
+def test_peaks_follow_loud_and_quiet_passages_to_within_a_sliver_of_a_pixel():
+    """Each pixel shows the audio under it, give or take a few percent of its width at either edge. (They used to be
+    cut at the floor of blocks up to half a pixel wide, so on music with sharp transitions whole columns showed the
+    neighbouring passage: the peaks were off by up to 15 % of full scale.)"""
+    rng = np.random.default_rng(23)
+    parts, total = [], 0
+    while total < 1_500_000:
+        n = int(rng.integers(3_000, 120_000))
+        loud = float(rng.choice([0.03, 0.2, 0.9]))
+        parts.append((rng.standard_normal((n, 2)) * loud * 0.4).clip(-1, 1).astype(np.float32))
+        total += n
+    doc = make_doc(np.concatenate(parts))
+    doc.delete(250_000, 300_000)
+    flat = doc.read(0, doc.frames)
+    for width in (10, 100, 600, 1000, 1400):
+        mn, mx = doc.peaks(0, doc.frames, width)
+        fpp = doc.frames / width
+        edges = np.rint(np.arange(width + 1) * fpp).astype(np.int64)
+        for i in range(width):
+            a, b = int(edges[i]), int(edges[i + 1])
+            slack = -(-(b - a) // 16)
+            if b - a < 1024:
+                inner = outer = flat[a:b]
+            else:
+                inner, outer = flat[a + slack:b - slack], flat[max(0, a - slack):b + slack]
+            assert np.all(mx[:, i] <= outer.max(axis=0) + 1e-6) and np.all(mn[:, i] >= outer.min(axis=0) - 1e-6), (width, i)
+            assert np.all(mx[:, i] >= inner.max(axis=0) - 1e-6) and np.all(mn[:, i] <= inner.min(axis=0) + 1e-6), (width, i)
 
 
 def test_peaks_handles_tiny_pieces():

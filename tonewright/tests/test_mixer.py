@@ -265,6 +265,104 @@ def test_effect_span_resize_and_move(project):
     assert project.effects == []
 
 
+# ------------------------------------------------------------------ the mix as it is played while being edited
+def wait_for(cond, timeout: float = 10.0) -> bool:
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def busy_project(project):
+    a, b = project.add_line(), project.add_line()
+    project.add_clip(a.id, ramp(BLOCK * 2 + 500), 0, "a")
+    c2 = project.add_clip(b.id, stereo((0.2, -0.3), 40000), 20000, "b", gain_db=-3.0)
+    project.set_clip(c2.id, fade_in=3000, fade_out=5000)
+    project.set_line(b.id, pan=0.5)
+    return project
+
+
+def test_the_live_mix_is_the_final_mix_block_by_block(project):
+    busy_project(project)
+    live = project.live()
+    assert live.frames == project.total_frames and live.sr == SR and live.channels == 2
+    whole = audio(project.render())
+    for a, b in ((0, 1000), (19_000, 25_000), (BLOCK - 5, BLOCK + 5), (live.frames - 700, live.frames + 900)):
+        np.testing.assert_allclose(live.read(a, b), whole[a:min(b, live.frames)], atol=1e-6)
+    assert live.read(live.frames, live.frames + 10).shape == (0, 2)
+    assert not live.pending
+
+
+def test_the_live_mix_is_frozen_when_the_project_changes_afterwards(project):
+    busy_project(project)
+    live = project.live()
+    before = live.read(0, 30000).copy()
+    project.set_line(project.lines[0].id, mute=True)
+    project.move_clip(project.clips[1].id, 0)
+    project.delete_clip(project.clips[0].id)
+    np.testing.assert_array_equal(live.read(0, 30000), before)
+    assert not np.allclose(project.live().read(0, 30000), before)
+
+
+def test_the_live_mix_renders_effects_in_the_background_and_matches_render(project):
+    line = project.add_line()
+    project.add_clip(line.id, stereo(0.4, 30000), 0)
+    project.add_effect("amplify", amplify_params(-6.0), 5000, 15000)
+    project.add_effect("amplify", amplify_params(-6.0), 10000, 20000)           # overlaps: applied on top of the first
+    live = project.live()
+    assert live.pending
+    assert np.allclose(live.read(6000, 7000), 0.4)                               # not rendered yet: plays dry, never waits
+    live.start_effects(delay=0.0)
+    assert wait_for(lambda: not live.pending) and live.error is None
+    whole = audio(project.render())
+    np.testing.assert_allclose(live.read(0, 30000), whole, atol=1e-5)
+    assert np.allclose(live.read(11000, 12000)[:, 0], 0.4 * 0.25, atol=1e-3)     # both spans on the overlap
+
+
+def test_a_muted_effect_is_not_part_of_the_live_mix(project):
+    line = project.add_line()
+    project.add_clip(line.id, stereo(0.4, 10000), 0)
+    span = project.add_effect("amplify", amplify_params(-6.0), 0, 10000)
+    project.set_effect(span.id, mute=True)
+    live = project.live()
+    assert not live.pending
+    assert np.allclose(live.read(0, 10000), 0.4)
+
+
+def test_finished_effect_spans_are_reused_by_the_next_live_mix_unless_something_under_them_changed(project):
+    line = project.add_line()
+    other = project.add_line()
+    project.add_clip(line.id, stereo(0.4, 30000), 0)
+    far = project.add_clip(other.id, stereo(0.1, 5000), 25000)
+    project.add_effect("amplify", amplify_params(-6.0), 2000, 8000)
+    cache: dict = {}
+    first = project.live(cache)
+    first.start_effects(delay=0.0)
+    assert wait_for(lambda: not first.pending)
+    project.move_clip(far.id, 26000)                                           # nowhere near the effect
+    second = project.live(cache)
+    assert not second.pending                                                  # ready at once, nothing rendered again
+    project.set_clip(project.clips[0].id, gain_db=-1.0)                        # the clip under the effect
+    third = project.live(cache)
+    assert third.pending
+    for live in (first, second, third):
+        live.close()
+
+
+def test_closing_a_live_mix_stops_its_background_work(project):
+    line = project.add_line()
+    project.add_clip(line.id, stereo(0.4, 30000), 0)
+    project.add_effect("amplify", amplify_params(-6.0), 0, 30000)
+    live = project.live()
+    live.start_effects(delay=5.0)
+    live.close()
+    assert wait_for(lambda: not live._thread.is_alive(), 2.0)
+    assert live.pending and live.error is None
+
+
 # ------------------------------------------------------------------ history
 def test_undo_and_redo_restore_the_arrangement_but_share_the_audio(project):
     line = project.add_line()

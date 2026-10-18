@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -16,7 +17,7 @@ from typing import Any, Callable, Iterable, Optional
 import numpy as np
 
 from . import effects as fx
-from .common import CancelToken, ProgressFn, scaled
+from .common import Cancelled, CancelToken, ProgressFn, scaled
 from .document import Clip, PieceSeq, slice_pieces
 from .source import SourceWriter
 from .timefmt import db_to_amp
@@ -103,6 +104,27 @@ def fade_envelope(first: int, count: int, length: int, fade_in: int, fade_out: i
         t = np.clip((k - (length - fade_out)) / fade_out, 0.0, 1.0)
         env = env * np.where(k >= length - fade_out, np.cos(0.5 * math.pi * t), 1.0)
     return env.astype(np.float32)
+
+
+def _mix_range(jobs: list[tuple[MixClip, np.ndarray]], a: int, b: int, master: float = 1.0) -> np.ndarray:
+    """Frames [a, b) of the lines mixed together, as a fresh (b - a, 2) array."""
+    mix = np.zeros((b - a, CHANNELS), np.float32)
+    for c, gains in jobs:
+        lo, hi = max(a, c.start), min(b, c.end)
+        if hi <= lo:
+            continue
+        data = c.seq.read(c.offset + lo - c.start, c.offset + hi - c.start)
+        n = len(data)
+        if not n:
+            continue
+        data = data * gains
+        env = fade_envelope(lo - c.start, n, c.length, c.fade_in, c.fade_out)
+        if env is not None:
+            data = data * env[:, None]
+        mix[lo - a: lo - a + n] += data
+    if master != 1.0:
+        mix *= np.float32(master)
+    return mix
 
 
 # ------------------------------------------------------------------ the project
@@ -380,10 +402,8 @@ class MixProject:
         return {l.id for l in self.lines if not l.mute}
 
     # ---- rendering
-    def render_tracks(self, a: int = 0, b: Optional[int] = None, *, master: float = 1.0,
-                      progress: Optional[ProgressFn] = None, cancel: Optional[CancelToken] = None) -> Clip:
-        """The lines mixed together (no effect spans), frames [a, b) of the mix. `master` scales the sum."""
-        b = self.total_frames if b is None else b
+    def _track_jobs(self, a: int, b: int) -> list[tuple[MixClip, np.ndarray]]:
+        """(clip, [left gain, right gain]) for every audible clip that touches frames [a, b)."""
         audible = self.audible_lines()
         lines = {l.id: l for l in self.lines}
         jobs = []
@@ -393,35 +413,30 @@ class MixProject:
                 lg, rg = balance_gains(l.pan)
                 level = db_to_amp(l.volume_db) * db_to_amp(c.gain_db)
                 jobs.append((c, np.array([lg * level, rg * level], np.float32)))
+        return jobs
+
+    def render_tracks(self, a: int = 0, b: Optional[int] = None, *, master: float = 1.0,
+                      progress: Optional[ProgressFn] = None, cancel: Optional[CancelToken] = None) -> Clip:
+        """The lines mixed together (no effect spans), frames [a, b) of the mix. `master` scales the sum."""
+        b = self.total_frames if b is None else b
+        jobs = self._track_jobs(a, b)
         writer = SourceWriter(self.sr, CHANNELS, label="mix")
         try:
             for blk in range(a, b, BLOCK):
                 if cancel is not None:
                     cancel.check()
                 end = min(b, blk + BLOCK)
-                mix = np.zeros((end - blk, CHANNELS), np.float32)
-                for c, gains in jobs:
-                    lo, hi = max(blk, c.start), min(end, c.end)
-                    if hi <= lo:
-                        continue
-                    data = c.seq.read(c.offset + lo - c.start, c.offset + hi - c.start)
-                    n = len(data)
-                    if not n:
-                        continue
-                    data = data * gains
-                    env = fade_envelope(lo - c.start, n, c.length, c.fade_in, c.fade_out)
-                    if env is not None:
-                        data = data * env[:, None]
-                    mix[lo - blk: lo - blk + n] += data
-                if master != 1.0:
-                    mix *= np.float32(master)
-                writer.write(mix)
+                writer.write(_mix_range(jobs, blk, end, master))
                 if progress:
                     progress((end - a) / max(1, b - a))
         except BaseException:
             writer.abort()
             raise
         return Clip.from_source(writer.finish())
+
+    def live(self, cache: Optional[dict] = None) -> "LiveMix":
+        """A frozen, instantly playable copy of the mix as it is now (see LiveMix)."""
+        return LiveMix(self, cache)
 
     def render(self, *, effects: bool = True, master: float = 1.0, progress: Optional[ProgressFn] = None,
                cancel: Optional[CancelToken] = None) -> Clip:
@@ -520,3 +535,126 @@ class MixProject:
                             *(e.id for e in project.effects)])
         project.touch()
         return project
+
+
+# ------------------------------------------------------------------ playing the mix while it is being edited
+class _LiveSpan:
+    def __init__(self, index: int, effect: "fx.Effect", params: dict, a: int, b: int, key: tuple) -> None:
+        self.index, self.effect, self.params, self.a, self.b, self.key = index, effect, params, a, b, key
+
+
+class _SpanInput:
+    """What an effect span is fed: the lines mixed, with the spans before it already applied (as `render` does)."""
+    channels = CHANNELS
+
+    def __init__(self, live: "LiveMix", index: int) -> None:
+        self._live, self._index = live, index
+        self.sr, self.frames = live.sr, live.frames
+
+    def read(self, a: int, b: int) -> np.ndarray:
+        return self._live._compose(a, b, self._index)
+
+
+EFFECT_CACHE = 6                     # rendered effect spans kept for the next LiveMix (a drag makes dozens of them)
+
+
+class LiveMix:
+    """What the Multitrack page plays: the lines mixed block by block as the sound card asks for them, with the effect
+    spans applied where they sit. It is built from a frozen copy of the project, so the project can keep changing while
+    this plays (the player is then handed a fresh LiveMix, see `Player.swap`).
+
+    Mixing the lines costs next to nothing, so a moved clip, a fade or a level is heard at once and starting to play
+    takes no time. An effect needs its stretch of the mix rendered first; that happens on a background thread, spans
+    in order, and until a span is ready its stretch plays without the effect. Finished spans go into `cache` (give
+    every LiveMix the same dict) so a change that does not touch a span does not render it again."""
+
+    channels = CHANNELS
+
+    def __init__(self, project: MixProject, cache: Optional[dict] = None) -> None:
+        self.sr = project.sr
+        self.frames = project.total_frames
+        self._jobs = [(replace(c), gains) for c, gains in project._track_jobs(0, self.frames)]
+        self._cache = cache if cache is not None else {}
+        self._results: dict[int, Clip] = {}
+        self._lock = threading.Lock()
+        self._cancel = CancelToken()
+        self._thread: Optional[threading.Thread] = None
+        self.error: Optional[BaseException] = None
+        self.error_reported = False                      # for whoever shows the error: only once
+        self._spans: list[_LiveSpan] = []
+        for e in sorted((e for e in project.effects if not e.mute), key=lambda e: (e.start, e.id)):
+            a, b = max(0, e.start), min(self.frames, e.end)
+            if b <= a:
+                continue
+            clips = tuple((c.seq, c.start, c.offset, c.length, tuple(g.tolist()), c.fade_in, c.fade_out)
+                          for c, g in self._jobs if c.end > a and c.start < b)
+            earlier = tuple(s.key for s in self._spans if s.b > a and s.a < b)
+            key = (e.effect, json.dumps(e.params, sort_keys=True, default=str), a, b, clips, earlier)
+            self._spans.append(_LiveSpan(len(self._spans), fx.get(e.effect), copy.deepcopy(e.params), a, b, key))
+            hit = self._cache.get(key)
+            if hit is not None:
+                self._results[len(self._spans) - 1] = hit
+
+    # ---- what the player calls
+    def read(self, a: int, b: int) -> np.ndarray:
+        """Frames [a, b) of the mix: (b - a, 2) float32. Never waits for an effect."""
+        a, b = max(0, a), min(self.frames, b)
+        if b <= a:
+            return np.zeros((0, CHANNELS), np.float32)
+        return self._compose(a, b, len(self._spans))
+
+    def _compose(self, a: int, b: int, upto: int) -> np.ndarray:
+        out = _mix_range(self._jobs, a, b)
+        with self._lock:
+            ready = dict(self._results)
+        for span in self._spans[:upto]:
+            lo, hi = max(a, span.a), min(b, span.b)
+            result = ready.get(span.index)
+            if hi > lo and result is not None:
+                out[lo - a: hi - a] = result.read(lo - span.a, hi - span.a)
+        return out
+
+    # ---- effects
+    @property
+    def pending(self) -> bool:
+        """True while some effect span is not rendered yet (its stretch is playing without the effect)."""
+        with self._lock:
+            return len(self._results) < len(self._spans) and self.error is None
+
+    def pending_at(self, frame: int, ahead: int = 0) -> bool:
+        """True if an effect span covering [frame, frame + ahead] (or one it depends on) is not rendered yet."""
+        with self._lock:
+            return self.error is None and any(s.index not in self._results and s.b > frame and s.a <= frame + ahead
+                                              for s in self._spans)
+
+    def start_effects(self, delay: float = 0.15) -> None:
+        """Render the effect spans in the background. `delay` lets a burst of edits pass before any work is started."""
+        if self._thread is not None or not self.pending:
+            return
+        self._thread = threading.Thread(target=self._render_spans, args=(delay,), daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        """Abandon unfinished work (the project changed again, or playback stopped)."""
+        self._cancel.cancel()
+
+    def _render_spans(self, delay: float) -> None:
+        if self._cancel.wait(delay):
+            return
+        try:
+            for span in self._spans:
+                self._cancel.check()
+                with self._lock:
+                    if span.index in self._results:
+                        continue
+                clip = fx.run_effect(span.effect, span.params, _SpanInput(self, span.index), span.a, span.b,
+                                     cancel=self._cancel)
+                with self._lock:
+                    self._results[span.index] = clip
+                self._cache[span.key] = clip
+                while len(self._cache) > EFFECT_CACHE:
+                    self._cache.pop(next(iter(self._cache)), None)
+        except Cancelled:
+            return
+        except Exception as exc:  # noqa: BLE001 - reported by whoever is playing
+            self.error = exc
