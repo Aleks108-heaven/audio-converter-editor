@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QUrl, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox
 
 from tonewright.core import effects as fx
 from tonewright.core import ffmpeg
@@ -674,3 +674,151 @@ def test_the_timeline_paints_every_item_without_errors(mix, qapp):
     mix.board.grab()
     mix.canvas.set_zoom(3)
     mix.board.grab()
+
+
+# ------------------------------------------------------------------ the volume curve
+def key(canvas, k):
+    from PySide6.QtGui import QKeyEvent
+    canvas.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, k, Qt.KeyboardModifier.NoModifier))
+
+
+def curve_setup(mix, points=None):
+    """One clip with the volume curve switched on (and snapping off, so positions are exact)."""
+    mix.mix.add_files(mix.files[:1])
+    clip = mix.mix.project.clips[0]
+    if points:
+        mix.mix.project.set_envelope(clip.id, points)
+    mix.canvas.snap = False
+    mix.canvas.set_envelope_mode(True)
+    return clip, mix.canvas.clip_rect(clip, mix.canvas.row_of("line", clip.line))
+
+
+def test_the_volume_curve_mode_follows_the_button_and_the_e_key(mix):
+    btn = mix.mix_page.env_btn
+    assert btn.isCheckable() and not btn.isChecked() and not mix.canvas.envelope_mode
+    btn.setChecked(True)
+    assert mix.canvas.envelope_mode
+    key(mix.canvas, Qt.Key.Key_E)
+    assert not mix.canvas.envelope_mode and not btn.isChecked()
+
+
+def test_clicking_the_line_adds_a_point_and_dragging_it_down_makes_the_clip_quieter(mix):
+    clip, r = curve_setup(mix)
+    c = mix.canvas
+    x, y = r.center().x(), c.env_y(r, 1.0)
+    assert c.hit_test(QPointF(x, y)).kind == "env-line"
+    drag(c, (x, y), (x, y + c.env_px_per_level(r) * 0.5))                       # down to half the level
+    assert len(clip.envelope) == 1
+    frame, level = clip.envelope[0]
+    assert frame == c.x_to_frame(x) - clip.start and level == pytest.approx(0.5, abs=0.02)
+    assert mix.mix.project.undo_label == "Volume curve"
+    mix.mix.undo()                                                              # adding and moving was one step
+    assert mix.mix.project.clip(clip.id).envelope == ()
+
+
+def test_clicking_the_line_without_moving_still_adds_a_point_that_can_be_undone(mix):
+    clip, r = curve_setup(mix)
+    c = mix.canvas
+    x, y = r.center().x(), c.env_y(r, 1.0)
+    press(c, x, y)
+    release(c, x, y)
+    assert len(clip.envelope) == 1 and clip.envelope[0][1] == pytest.approx(1.0)
+    mix.mix.undo()
+    assert mix.mix.project.clip(clip.id).envelope == ()
+
+
+def test_points_are_dragged_in_time_but_never_past_their_neighbours(mix):
+    clip, r = curve_setup(mix, [(SR // 2, 1.0), (SR, 1.0), (2 * SR, 0.5)])
+    c = mix.canvas
+    x, y = c.frame_to_x(clip.start + SR), c.env_y(r, 1.0)
+    assert c.hit_test(QPointF(x, y)).kind == "env-point" and c.hit_test(QPointF(x, y)).index == 1
+    drag(c, (x, y), (x + 5 * c.px_per_sec, y))                                  # far to the right: stops at the next point
+    assert [f for f, _ in clip.envelope] == [SR // 2, 2 * SR - 1, 2 * SR]
+    x, y = c.frame_to_x(clip.start + SR // 2), c.env_y(r, 1.0)
+    drag(c, (x, y), (x - 9 * c.px_per_sec, y))                                  # far to the left: stops at the clip's start
+    assert clip.envelope[0][0] == 0
+
+
+def test_a_point_dragged_to_the_bottom_is_silent_and_snaps_to_unity_and_silence(mix):
+    clip, r = curve_setup(mix, [(SR, 1.0)])
+    c = mix.canvas
+    c.snap = True
+    x, y = c.frame_to_x(clip.start + SR), c.env_y(r, 1.0)
+    drag(c, (x, y), (x, y + c.env_px_per_level(r) * 1.97))
+    assert clip.envelope[0][1] == 0.0                                           # within a few px of the bottom: silence
+    drag(c, (x, c.env_y(r, 0.0)), (x, c.env_y(r, 0.0) - c.env_px_per_level(r) * 0.98))
+    assert clip.envelope[0][1] == 1.0
+    out = mix.mix.project.render()
+    assert out.frames > 0
+
+
+def test_the_curve_changes_what_is_built(mix):
+    clip, r = curve_setup(mix)
+    p = mix.mix.project
+    loud = np.abs(p.render().read(SR, SR + 1000)).max()
+    c = mix.canvas
+    x, y = c.frame_to_x(clip.start + SR), c.env_y(r, 1.0)
+    drag(c, (x, y), (x, y + c.env_px_per_level(r) * 1.0))                       # the whole clip goes silent
+    assert loud > 0.01 and np.abs(p.render().read(SR, SR + 1000)).max() == 0.0
+
+
+def test_the_green_gain_line_gives_way_to_the_curve_while_editing(mix):
+    clip, r = curve_setup(mix)
+    c = mix.canvas
+    y = c.gain_y(clip, r)                                                       # where the green line is
+    assert c.hit_test(QPointF(r.center().x(), y)).kind == "env-line"            # the curve (flat, unity) lies close by
+    c.set_envelope_mode(False)
+    assert c.hit_test(QPointF(r.center().x(), y)).kind == "gain"
+
+
+def test_clip_edges_and_fade_handles_still_work_while_the_curve_is_on(mix):
+    clip, r = curve_setup(mix, [(SR, 0.5), (2 * SR, 1.0)])
+    c = mix.canvas
+    drag(c, (r.left() + 1, r.center().y()), (r.left() + 1 + 0.3 * c.px_per_sec, r.center().y()))   # trim from the left
+    assert 0 < clip.start == clip.offset < SR
+    assert clip.envelope == ((SR - clip.offset, 0.5), (2 * SR - clip.offset, 1.0))     # the curve stayed on the audio
+    x, y = c.frame_to_x(clip.start + clip.envelope[0][0]), c.env_y(c.clip_rect(clip, c.row_of("line", clip.line)), 0.5)
+    drag(c, (x, y), (x, y))                                                     # a click on a point adds nothing
+    assert len(clip.envelope) == 2
+
+
+def test_right_click_on_a_point_offers_to_delete_it_and_the_curve_can_be_reset(mix, monkeypatch):
+    clip, r = curve_setup(mix, [(SR // 2, 0.5), (SR, 1.0), (2 * SR, 0.0)])
+    c = mix.canvas
+    seen, menus = [], []
+
+    class RecordingMenu(QMenu):                                                 # a real menu would block the test
+        def exec(self, *args):  # type: ignore[override]
+            menus.append(self)
+
+    monkeypatch.setattr("tonewright.ui.mix_page.QMenu", RecordingMenu)
+    c.contextRequested.connect(lambda pos, hit, frame: seen.append(hit))
+    press(c, c.frame_to_x(clip.start + SR), c.env_y(r, 1.0), Qt.MouseButton.RightButton)
+    assert seen[-1].kind == "env-point" and seen[-1].index == 1 and c.selected == ("clip", clip.id)
+    assert [a.text() for a in menus[-1].actions()][:2] == ["Delete this point", "Reset the volume curve"]
+    next(a for a in menus[-1].actions() if a.text() == "Delete this point").trigger()
+    assert [f for f, _ in clip.envelope] == [SR // 2, 2 * SR] and mix.mix.project.undo_label == "Delete volume point"
+    mix.mix.undo()
+    assert len(mix.mix.project.clip(clip.id).envelope) == 3
+    mix.mix.delete_envelope_point(clip.id, seen[-1].index)
+    assert [f for f, _ in clip.envelope] == [SR // 2, 2 * SR] and mix.mix.project.undo_label == "Delete volume point"
+    mix.mix.undo()
+    assert len(mix.mix.project.clip(clip.id).envelope) == 3
+    insp = mix.mix_page.inspector
+    c.select("clip", clip.id)
+    assert insp.env_reset.isEnabled()
+    insp.env_reset.click()
+    assert mix.mix.project.clip(clip.id).envelope == () and not insp.env_reset.isEnabled()
+
+
+def test_curve_mode_paints_points_and_tooltips_at_any_zoom(mix, qapp):
+    clip, r = curve_setup(mix, [(0, 0.0), (SR, 2.0), (2 * SR, 1.0), (3 * SR, 0.3)])
+    mix.mix.add_files(mix.files[1:2])
+    mix.board.grab()
+    mix.canvas.set_zoom(40000)
+    mix.board.grab()
+    mix.canvas.set_zoom(3)
+    mix.board.grab()
+    mix.canvas.set_envelope_mode(False)                                         # the curve stays visible, without points
+    mix.board.grab()
+    assert mix.canvas._level_text(0.0) == "−∞ dB" and mix.canvas._level_text(1.0) == "+0.0 dB"

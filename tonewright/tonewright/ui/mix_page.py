@@ -178,6 +178,8 @@ class MixController(QObject):
                 seq = item.doc.snapshot()
                 path = str(item.path) if item.path and not item.doc.modified else None
                 return item.name, path, self._to_project_format(seq)
+            if item.path is None:
+                raise ValueError("This item has no audio to add.")
             return item.name, str(item.path), self._load_file(Path(item.path))
         path = Path(item)
         return path.stem, str(path), self._load_file(path)
@@ -334,6 +336,22 @@ class MixController(QObject):
         self._refresh_all()
         self.info(tr("Cross-faded"))
 
+    def delete_envelope_point(self, clip_id: int, index: int) -> None:
+        clip = self.project.clip(clip_id)
+        if not 0 <= index < len(clip.envelope):
+            return
+        self.begin_edit("Delete volume point")
+        self.project.set_envelope(clip_id, [p for i, p in enumerate(clip.envelope) if i != index])
+        self._refresh_all()
+
+    def clear_envelope(self, clip_id: Optional[int] = None) -> None:
+        clip = self.canvas.selected_clip if clip_id is None else self.project.clip(clip_id)
+        if clip is None or not clip.envelope:
+            return
+        self.begin_edit("Reset volume curve")
+        self.project.set_envelope(clip.id, ())
+        self._refresh_all()
+
     def set_clip_values(self, **values) -> None:
         clip = self.canvas.selected_clip
         if clip is None:
@@ -435,6 +453,11 @@ class MixController(QObject):
             self._refresh_all()
         finally:
             self._resume(resume)
+
+    def edit_selected_effect(self) -> None:
+        span = self.canvas.selected_effect
+        if span is not None:
+            self.edit_effect(span.id)
 
     def edit_effect(self, span_id: int) -> None:
         span = self.project.effect_span(span_id)
@@ -825,6 +848,8 @@ class MixInspector(QWidget):
                          "• Drag a clip to move it, drag its edges to trim, and drag the white squares at its top "
                          "corners to fade it in or out.\n"
                          "• Overlap two clips and press “Crossfade” for a smooth transition.\n"
+                         "• For full control, press “Volume curve” (or E): click a clip's line to add a point, then drag "
+                         "the point up or down to make that part quieter or louder.\n"
                          "• Use each line's sliders for volume and pan, and Mute / Solo to listen to parts.\n"
                          "• Double-click an effect, or choose one in the Effects tab, to lay it over a stretch of the mix.\n\n"
                          "When it sounds right, press “Build the mix”."))
@@ -878,6 +903,10 @@ class MixInspector(QWidget):
             spin.valueChanged.connect(lambda v, k=key: None if self._loading else self.ctl.set_clip_values(**{k: int(v * self.ctl.sr)}))
         lay.addWidget(self._row(tr("Fade in"), self.fade_in))
         lay.addWidget(self._row(tr("Fade out"), self.fade_out))
+        self.env_reset = make_button(tr("Reset the volume curve"), icon="envelope")
+        self.env_reset.setToolTip(tr("Remove every point of this clip's volume curve"))
+        self.env_reset.clicked.connect(lambda _=False: self.ctl.clear_envelope())
+        lay.addWidget(self.env_reset)
         lay.addWidget(divider())
         for text, icon_name, handler in ((tr("Crossfade with the clip it overlaps"), "wand", self.ctl.crossfade_selected),
                                          (tr("Split at the playhead"), "scissors-split", self.ctl.split_at_playhead),
@@ -904,7 +933,7 @@ class MixInspector(QWidget):
         self.fx_end.valueEdited.connect(lambda s: None if self._loading else self.ctl.set_effect_range(end=int(s * self.ctl.sr)))
         lay.addWidget(self._row(tr("From"), self.fx_start))
         lay.addWidget(self._row(tr("To"), self.fx_end))
-        for text, icon_name, handler in ((tr("Settings…"), "sliders", lambda: self.ctl.edit_effect(self.ctl.canvas.selected[1])),
+        for text, icon_name, handler in ((tr("Settings…"), "sliders", self.ctl.edit_selected_effect),
                                          (tr("Remove effect"), "trash", self.ctl.delete_selected)):
             b = make_button(text, icon=icon_name)
             b.clicked.connect(lambda _=False, h=handler: h())
@@ -928,6 +957,7 @@ class MixInspector(QWidget):
                 self.clip_gain.setValue(clip.gain_db)
                 self.fade_in.setValue(clip.fade_in / sr)
                 self.fade_out.setValue(clip.fade_out / sr)
+                self.env_reset.setEnabled(bool(clip.envelope))
             elif span is not None:
                 self.item_page.setCurrentIndex(2)
                 self.fx_name.setText(tr(fx.get(span.effect).name))
@@ -988,7 +1018,12 @@ class MixPage(QWidget):
         self.dup_btn = self._tool("copy", tr("Duplicate the selected clip (Ctrl+D)"), c.duplicate_selected)
         self.cross_btn = self._tool("wand", tr("Cross-fade the selected clip with the one it overlaps"), c.crossfade_selected, text=tr("Crossfade"))
         self.del_btn = self._tool("trash", tr("Delete the selection (Del)"), c.delete_selected)
-        for b in (self.split_btn, self.dup_btn, self.cross_btn, self.del_btn):
+        self.env_btn = self._tool("envelope", tr("Draw each clip's volume as a curve: click its line to add a point, drag a "
+                                                 "point up or down to change the volume there, right-click a point to "
+                                                 "delete it (E)"),
+                                  lambda on: self.board.canvas.set_envelope_mode(on), checkable=True, text=tr("Volume curve"))
+        self.board.canvas.envelopeModeChanged.connect(self.env_btn.setChecked)
+        for b in (self.split_btn, self.dup_btn, self.cross_btn, self.env_btn, self.del_btn):
             h.addWidget(b)
         h.addSpacing(6)
         h.addWidget(divider(True))
@@ -1096,15 +1131,25 @@ class MixPage(QWidget):
 
     def restyle(self) -> None:
         t = theme.current()
-        self.findChild(QWidget, "mixtoolbar").setStyleSheet(f"#mixtoolbar {{ background: {t.bg0}; border-bottom: 1px solid {t.line}; }}")
-        self.findChild(QWidget, "mixtransport").setStyleSheet(f"#mixtransport {{ background: {t.bg1}; border-top: 1px solid {t.line}; }}")
+        for name, css in (("mixtoolbar", f"#mixtoolbar {{ background: {t.bg0}; border-bottom: 1px solid {t.line}; }}"),
+                          ("mixtransport", f"#mixtransport {{ background: {t.bg1}; border-top: 1px solid {t.line}; }}")):
+            bar = self.findChild(QWidget, name)
+            if bar is not None:
+                bar.setStyleSheet(css)
         self.board.restyle()
 
     # ---- context menu
     def _context_menu(self, pos: QPoint, hit: Hit, frame: int) -> None:
         c = self.ctl
         menu = QMenu(self)
-        if hit.kind in ("clip", "clip-l", "clip-r", "fade-in", "fade-out", "gain"):
+        if hit.kind in ("clip", "clip-l", "clip-r", "fade-in", "fade-out", "gain", "env-point", "env-line"):
+            if hit.kind == "env-point":
+                menu.addAction(tr("Delete this point"), lambda: c.delete_envelope_point(hit.id, hit.index))
+            clip = c.project.clip(hit.id)
+            if clip.envelope:
+                menu.addAction(tr("Reset the volume curve"), lambda: c.clear_envelope(hit.id))
+            if hit.kind == "env-point" or clip.envelope:
+                menu.addSeparator()
             menu.addAction(tr("Split at the playhead"), c.split_at_playhead)
             menu.addAction(tr("Duplicate"), c.duplicate_selected)
             menu.addAction(tr("Crossfade with the clip it overlaps"), c.crossfade_selected)

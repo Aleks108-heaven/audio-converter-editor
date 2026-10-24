@@ -10,7 +10,7 @@ import itertools
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, NamedTuple, Optional, Sequence
+from typing import Callable, Iterable, Iterator, NamedTuple, Optional, Protocol, Sequence
 
 import numpy as np
 
@@ -102,6 +102,18 @@ def map_frame(frame: int, a: int, old_b: int, new_b: int) -> int:
         return frame + (new_b - old_b)
     old_len, new_len = old_b - a, new_b - a
     return frame if old_len == new_len else a + min(new_len, int((frame - a) * new_len / old_len))
+
+
+class Readable(Protocol):
+    """All that playing and rendering need of audio: a PieceSeq, or anything shaped like one (the live mix)."""
+
+    sr: int
+    channels: int
+
+    @property
+    def frames(self) -> int: ...
+
+    def read(self, a: int, b: int) -> np.ndarray: ...
 
 
 class PieceSeq:

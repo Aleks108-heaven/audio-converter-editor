@@ -147,6 +147,12 @@ Use it for transitions between songs, voice over music, or layering sounds.
   (switch **Snap** off to place freely). **Trim** with the clip's left and right edges.
 * **Fade** with the small handles at the top corners. A fade is an equal-power curve, so a **Crossfade**
   between two overlapping clips keeps the loudness steady. Select a clip and press *Crossfade*.
+* **Volume curve** (the *Volume curve* button, or `E`) for transitions you shape by hand. Click a clip's line to
+  put a point there, then drag the point **up** to make that part louder or **down** to make it quieter (all the way
+  down is silence; the dashed line is the clip's normal level). Drag it sideways to move it in time, and right-click a
+  point to delete it, or reset the whole curve. Put a falling curve on one song and a rising one on the song that
+  overlaps it to blend them exactly the way you like. It works together with fades and the clip's gain, follows the
+  audio when you trim or split, and is saved in the mix project.
 * **Volume and pan:** each line has a volume slider and a balance slider (double-click resets), plus
   **Mute** and **Solo**. Drag the green line inside a clip to set that clip's own gain.
 * **Effects:** *Add effect* puts an effect span under the lines. It affects the whole mix between its

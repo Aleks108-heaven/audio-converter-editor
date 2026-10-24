@@ -13,7 +13,7 @@ import numpy as np
 
 from .. import ffmpeg as ff
 from ..common import CancelToken, ProgressFn, scaled
-from ..document import Clip, Piece, PieceSeq
+from ..document import Clip, Piece, Readable
 from ..source import Source, SourceWriter
 
 CHUNK = 1 << 18
@@ -275,7 +275,7 @@ def _fit(src: Source, frames: int, preserve: bool) -> Clip:
     return Clip([Piece(src, 0, src.frames), Piece(pad, 0, pad.frames)], src.sr, src.channels)
 
 
-def run_effect(effect: Effect, params: Optional[Mapping[str, Any]], seq: PieceSeq, a: int, b: int, *,
+def run_effect(effect: Effect, params: Optional[Mapping[str, Any]], seq: Readable, a: int, b: int, *,
                channels: Optional[Sequence[int]] = None, window: Optional[int] = None,
                progress: Optional[ProgressFn] = None, cancel: Optional[CancelToken] = None,
                extra: Optional[dict] = None) -> Clip:
@@ -325,7 +325,7 @@ def run_effect(effect: Effect, params: Optional[Mapping[str, Any]], seq: PieceSe
     return Clip.from_source(writer.finish())
 
 
-def render_preview(effect: Effect, params: Optional[Mapping[str, Any]], seq: PieceSeq, a: int, b: int, *,
+def render_preview(effect: Effect, params: Optional[Mapping[str, Any]], seq: Readable, a: int, b: int, *,
                    seconds: float = 8.0, bypass: bool = False, channels: Optional[Sequence[int]] = None,
                    progress: Optional[ProgressFn] = None, cancel: Optional[CancelToken] = None,
                    extra: Optional[dict] = None) -> np.ndarray:

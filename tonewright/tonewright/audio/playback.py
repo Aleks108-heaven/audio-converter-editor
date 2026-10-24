@@ -15,7 +15,7 @@ from typing import Callable, Iterator, Optional
 
 import numpy as np
 
-from ..core.document import PieceSeq
+from ..core.document import Readable
 from .devices import AudioDeviceError, sd
 
 BLOCK = 2048
@@ -31,7 +31,7 @@ class Player:
         self._pos_lock = threading.Lock()                # only ever held for an assignment or two, also by the audio thread
         self._gen = 0
         self._feedq: tuple[int, queue.Queue] = (0, queue.Queue(maxsize=QUEUE_BLOCKS))   # (generation, blocks), swapped as one
-        self._seq: Optional[PieceSeq] = None
+        self._seq: Optional[Readable] = None
         self._start = 0
         self._end = 0
         self._loop = False
@@ -60,7 +60,7 @@ class Player:
         return self._state == "playing"
 
     @property
-    def sequence(self) -> Optional[PieceSeq]:
+    def sequence(self) -> Optional[Readable]:
         """What is being played now (None when stopped); the audio `swap` replaced is what this returned before."""
         return self._seq if self._state != "stopped" else None
 
@@ -101,7 +101,7 @@ class Player:
         return float(peak[0]), float(peak[1])
 
     # ------------------------------------------------------------ control
-    def play(self, seq: PieceSeq, start: int = 0, end: Optional[int] = None, *, loop: bool = False,
+    def play(self, seq: Readable, start: int = 0, end: Optional[int] = None, *, loop: bool = False,
              loop_range: Optional[tuple[int, int]] = None) -> None:
         self.stop()
         total = seq.frames
@@ -139,7 +139,7 @@ class Player:
             raise AudioDeviceError(f"Could not open the audio output: {exc}") from exc
 
     @staticmethod
-    def _blocks(seq: PieceSeq, pos: int, end: int, loop: bool, loop_a: int, loop_b: int) -> Iterator[tuple[np.ndarray, int]]:
+    def _blocks(seq: Readable, pos: int, end: int, loop: bool, loop_a: int, loop_b: int) -> Iterator[tuple[np.ndarray, int]]:
         """(block, first frame) from `pos` to the end, wrapping at the loop end while looping."""
         stop_at = loop_b if loop else end
         while True:
@@ -199,7 +199,7 @@ class Player:
             frame = max(0, min(frame, self._end - 1))
             self._begin_feed(frame)
 
-    def swap(self, seq: PieceSeq, *, frame: Optional[int] = None, end: Optional[int] = None,
+    def swap(self, seq: Readable, *, frame: Optional[int] = None, end: Optional[int] = None,
              loop_range: Optional[tuple[int, int]] = None) -> bool:
         """Carry on playing `seq` (a newer version of the audio) from `frame`, or from where the sound card is now.
 

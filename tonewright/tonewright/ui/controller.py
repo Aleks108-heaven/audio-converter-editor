@@ -17,7 +17,7 @@ from ..core import access, analysis, effects as fx
 from ..core import ffmpeg, formats, generate, ops
 from ..core import tags as tagmod
 from ..core.convert import ConvertItem, ConvertOptions, convert_item
-from ..core.document import Clip, Document, Marker, diff_range, map_frame
+from ..core.document import Clip, Document, Marker, PieceSeq, diff_range, map_frame
 from ..core.effects import Effect
 from ..core.formats import EncodeSettings
 from ..core.generate import ToneSpec
@@ -306,8 +306,8 @@ class Controller(QObject):
         out or puts something in restarts a moment before it, so the join is the first thing you hear."""
         player, doc = self.player, self.doc
         old = player.sequence
-        if self._preview_active or self._scrubbing or old is None or doc is None:
-            return
+        if self._preview_active or self._scrubbing or not isinstance(old, PieceSeq) or doc is None:
+            return                                      # (what plays may also be the multitrack mix, which has no pieces)
         new = doc.snapshot()
         if new.frames == 0 or new.sr != old.sr:
             self.stop_playback()

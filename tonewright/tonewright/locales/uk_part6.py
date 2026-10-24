@@ -33,6 +33,12 @@ MESSAGES = {
     "Crossfade": "Кросфейд",
     "Crossfade with the clip it overlaps": "Кросфейд з кліпом, який він перекриває",
     "Delete clip": "Видалити кліп",
+    "Delete this point": "Видалити цю точку",
+    "Delete volume point": "Видалення точки гучності",
+    "Draw each clip's volume as a curve: click its line to add a point, drag a point up or down to change the volume "
+    "there, right-click a point to delete it (E)":
+        "Показати гучність кожного кліпу як криву: клацніть її лінію, щоб додати точку, тягніть точку вгору чи вниз, "
+        "щоб змінити гучність у цьому місці, клацніть точку правою кнопкою, щоб видалити її (E)",
     "Delete the selection (Del)": "Видалити вибране (Del)",
     "Double-click to rename": "Двічі клацніть, щоб перейменувати",
     "Drag the clip so it overlaps the one it should blend with":
@@ -75,6 +81,8 @@ MESSAGES = {
     "• Add files with “Add files…”, from the library, or by dropping them on the timeline.\n"
     "• Drag a clip to move it, drag its edges to trim, and drag the white squares at its top corners to fade it in or out.\n"
     "• Overlap two clips and press “Crossfade” for a smooth transition.\n"
+    "• For full control, press “Volume curve” (or E): click a clip's line to add a point, then drag "
+    "the point up or down to make that part quieter or louder.\n"
     "• Use each line's sliders for volume and pan, and Mute / Solo to listen to parts.\n"
     "• Double-click an effect, or choose one in the Effects tab, to lay it over a stretch of the mix.\n\n"
     "When it sounds right, press “Build the mix”.":
@@ -82,6 +90,8 @@ MESSAGES = {
         "• Додавайте файли кнопкою «Додати файли…», з бібліотеки або перетягуванням на часову шкалу.\n"
         "• Перетягуйте кліп, щоб перемістити його; тягніть його краї, щоб обрізати; тягніть білі квадрати у верхніх кутах, щоб налаштувати наростання чи згасання.\n"
         "• Перекрийте два кліпи й натисніть «Кросфейд» для плавного переходу.\n"
+        "• Для повного контролю натисніть «Крива гучності» (або E): клацніть лінію кліпу, щоб додати точку, а потім "
+        "тягніть її вгору чи вниз, щоб зробити цю ділянку тихішою або гучнішою.\n"
         "• Повзунки кожної лінії регулюють гучність і панораму, а кнопки «Вимк.» / «Соло» дозволяють слухати окремі частини.\n"
         "• Двічі клацніть ефект або виберіть його на вкладці «Ефекти», щоб накласти його на ділянку міксу.\n\n"
         "Коли звучить як слід, натисніть «Створити мікс».",
@@ -92,11 +102,14 @@ MESSAGES = {
     "Record onto this line": "Записати на цю лінію",
     "Redid {}": "Повторено: {0}",
     "Remove effect": "Видалити ефект",
+    "Remove every point of this clip's volume curve": "Видалити всі точки кривої гучності цього кліпу",
     "Remove line": "Видалення лінії",
     "Remove this effect": "Видалити цей ефект",
     "Remove this line": "Видалити цю лінію",
     "Rename line": "Перейменування лінії",
     "Replace the current mix? Unsaved changes will be lost.": "Замінити поточний мікс? Незбережені зміни буде втрачено.",
+    "Reset the volume curve": "Скинути криву гучності",
+    "Reset volume curve": "Скидання кривої гучності",
     "Resize effect": "Зміна розміру ефекту",
     "Save mix project": "Збереження проєкту міксу",
     "Save mix project…": "Зберегти проєкт міксу…",
@@ -111,6 +124,7 @@ MESSAGES = {
     "Split the clip at the playhead (S)": "Розділити кліп за позначкою відтворення (S)",
     "Starts at": "Починається",
     "The file {} is missing.": "Файл {0} відсутній.",
+    "This item has no audio to add.": "У цього елемента немає звуку, який можна додати.",
     "The loudest part of the mix is {} dB over the maximum, so it would distort. Lower the whole mix to prevent that?":
         "Найгучніша частина міксу на {0} дБ перевищує максимум, тож звук спотвориться. Знизити гучність усього міксу, щоб цього уникнути?",
     "The mix is too loud": "Мікс занадто гучний",
@@ -123,6 +137,7 @@ MESSAGES = {
     "To": "До",
     "Trim clip": "Обрізання кліпу",
     "Undid {}": "Скасовано: {0}",
+    "Volume curve": "Крива гучності",
     "This project contains a custom FFmpeg filter. Filters can read files and network addresses, so only run it if "
     "you trust where the project came from. Run it?":
         "Цей проєкт містить власний фільтр FFmpeg. Фільтри можуть читати файли та мережеві адреси, тому запускайте "

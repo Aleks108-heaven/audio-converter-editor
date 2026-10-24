@@ -11,7 +11,8 @@ from PySide6.QtGui import QColor, QFontMetrics, QKeyEvent, QMouseEvent, QPainter
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QScrollBar,
                                QSizePolicy, QSlider, QToolTip, QVBoxLayout, QWidget)
 
-from ..core.mixer import CLIP_GAIN_RANGE, MIN_CLIP, VOLUME_RANGE, EffectSpan, Line, MixClip, MixProject
+from ..core.mixer import (CLIP_GAIN_RANGE, ENVELOPE_MAX, MAX_ENVELOPE_POINTS, MIN_CLIP, VOLUME_RANGE, EffectSpan, Line,
+                          MixClip, MixProject, envelope_at)
 from ..core.timefmt import format_time
 from ..i18n import tr
 from . import icons, theme
@@ -26,6 +27,10 @@ RULER_H = 30
 EDGE = 6                      # grab zone at a clip's left/right edge, px
 HANDLE = 9                    # fade handle size, px
 GAIN_PX_PER_DB = 0.4
+ENV_TOP = 15                  # the volume curve spans the clip from this far below its top edge...
+ENV_BOTTOM = 5                # ...to this far above its bottom edge (silence)
+ENV_POINT = 4.5               # radius of a curve point, px
+ENV_GRAB = 8                  # how close the pointer must be to a point (or the line) to take it, px
 LINE_COLOURS = ("#4ea6ff", "#5fd38d", "#ffb23e", "#ff6b81", "#b48cff", "#3ed6d6")
 STEPS = (0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600)
 SNAP_PX = 8
@@ -41,9 +46,10 @@ class Row:
 
 @dataclass
 class Hit:
-    kind: str = "none"       # none | line | clip | clip-l | clip-r | fade-in | fade-out | gain | effect | effect-l | effect-r | fx-row | spare
+    kind: str = "none"       # none | line | clip | clip-l | clip-r | fade-in | fade-out | gain | env-point | env-line | effect | effect-l | effect-r | fx-row | spare
     id: int = 0
     row: Optional[Row] = None
+    index: int = -1          # env-point: which point of the clip's volume curve
 
 
 @dataclass
@@ -59,6 +65,10 @@ class _Drag:
     fade_out: int = 0
     gain: float = 0.0
     started: bool = False
+    env: tuple = ()          # env-point: the curve as it was when the drag began (or just after the point was added)
+    index: int = -1
+    frame: int = 0           # env-point: where the point was (frame within the clip) and its level, at the press
+    level: float = 1.0
 
 
 def compute_rows(project: Optional[MixProject]) -> tuple[list[Row], int]:
@@ -102,6 +112,7 @@ def mix_colours(fg: QColor, bg: QColor, amount: float) -> QColor:
 class MixCanvas(QWidget):
     changed = Signal()                       # the project was edited by dragging
     selectionChanged = Signal()
+    envelopeModeChanged = Signal(bool)       # the volume curves were switched on or off for editing
     playheadMoved = Signal(int)              # the user placed the playhead (frames)
     viewChanged = Signal()                   # zoom or scroll
     layoutChanged = Signal()                 # rows were added or removed
@@ -121,6 +132,7 @@ class MixCanvas(QWidget):
         self.playhead = 0
         self.selected: Optional[tuple[str, int]] = None
         self.snap = True
+        self.envelope_mode = False
         self.rows: list[Row] = []
         self._total_h = 0
         self._drag: Optional[_Drag] = None
@@ -208,6 +220,12 @@ class MixCanvas(QWidget):
             x = int(self.frame_to_x(f))
             self.update(x - 4, 0, 9, self.height())
 
+    def set_envelope_mode(self, on: bool) -> None:
+        if on != self.envelope_mode:
+            self.envelope_mode = on
+            self.update()
+            self.envelopeModeChanged.emit(on)
+
     # ---- selection
     def select(self, kind: Optional[str], ident: int = 0) -> None:
         new = (kind, ident) if kind else None
@@ -241,6 +259,38 @@ class MixCanvas(QWidget):
         mid = r.top() + 16 + (r.height() - 16) / 2
         return max(r.top() + 18, min(r.bottom() - 3, mid - c.gain_db * GAIN_PX_PER_DB))
 
+    # ---- the volume curve: level 0 at the bottom of the clip, ENVELOPE_MAX at the top, 1 (unchanged) halfway
+    @staticmethod
+    def env_px_per_level(r: QRectF) -> float:
+        return max(1.0, r.height() - ENV_TOP - ENV_BOTTOM) / ENVELOPE_MAX
+
+    def env_y(self, r: QRectF, level: float) -> float:
+        return r.bottom() - ENV_BOTTOM - max(0.0, min(ENVELOPE_MAX, level)) * self.env_px_per_level(r)
+
+    def env_polyline(self, c: MixClip, r: QRectF) -> list[QPointF]:
+        """The curve as drawn: its value at both edges of the clip and every point between them."""
+        pts = [QPointF(r.left(), self.env_y(r, envelope_at(c.envelope, 0)))]
+        pts += [QPointF(self.frame_to_x(c.start + f), self.env_y(r, v)) for f, v in c.envelope if 0 < f < c.length]
+        pts.append(QPointF(r.right(), self.env_y(r, envelope_at(c.envelope, c.length))))
+        return pts
+
+    @staticmethod
+    def _near_segment(p: QPointF, a: QPointF, b: QPointF, reach: float) -> bool:
+        dx, dy = b.x() - a.x(), b.y() - a.y()
+        length2 = dx * dx + dy * dy
+        t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((p.x() - a.x()) * dx + (p.y() - a.y()) * dy) / length2))
+        return math.hypot(p.x() - (a.x() + t * dx), p.y() - (a.y() + t * dy)) <= reach
+
+    def _env_hit(self, c: MixClip, r: QRectF, pos: QPointF, row: Row) -> Optional[Hit]:
+        """A point of the clip's volume curve under the pointer, or the stretch of line between two (to add one)."""
+        for i, (f, v) in enumerate(c.envelope):
+            if 0 <= f <= c.length and math.hypot(pos.x() - self.frame_to_x(c.start + f), pos.y() - self.env_y(r, v)) <= ENV_GRAB:
+                return Hit("env-point", c.id, row, i)
+        line = self.env_polyline(c, r)
+        if any(self._near_segment(pos, a, b, ENV_GRAB * 0.75) for a, b in zip(line, line[1:])):
+            return Hit("env-line", c.id, row)
+        return None
+
     # ---- hit testing
     def hit_test(self, pos: QPointF) -> Hit:
         row = self.row_at(pos.y())
@@ -259,11 +309,17 @@ class MixCanvas(QWidget):
                         return Hit("fade-in", c.id, row)
                     if abs(x - fo) <= HANDLE and abs(y - (r.top() + 2)) <= HANDLE:
                         return Hit("fade-out", c.id, row)
+                env = self._env_hit(c, r, pos, row) if self.envelope_mode and r.width() > 20 else None
+                if env is not None and env.kind == "env-point":          # a point at the very edge wins over trimming
+                    return env
                 if abs(x - r.left()) <= EDGE and r.width() > 3 * EDGE:
                     return Hit("clip-l", c.id, row)
                 if abs(x - r.right()) <= EDGE and r.width() > 3 * EDGE:
                     return Hit("clip-r", c.id, row)
-                if r.left() <= x <= r.right() and abs(y - self.gain_y(c, r)) <= 4 and r.width() > 20:
+                if env is not None and r.left() <= x <= r.right():
+                    return env
+                if (not self.envelope_mode and r.left() <= x <= r.right() and abs(y - self.gain_y(c, r)) <= 4
+                        and r.width() > 20):
                     return Hit("gain", c.id, row)
                 if r.left() <= x <= r.right():
                     return Hit("clip", c.id, row)
@@ -366,7 +422,7 @@ class MixCanvas(QWidget):
 
     def _draw_clip(self, p: QPainter, c: MixClip, row: Row, line: Line, audible: bool, t) -> None:
         r = self.clip_rect(c, row)
-        if r.right() < 0 or r.left() > self.width():
+        if self.project is None or r.right() < 0 or r.left() > self.width():
             return
         base = theme.qcolor(t.bg2)
         colour = line_colour(self.project, c.line)
@@ -411,10 +467,13 @@ class MixCanvas(QWidget):
             p.setBrush(shade)
             p.setPen(Qt.PenStyle.NoPen)
             p.drawPolygon(QPolygonF([QPointF(r.right(), r.top()), QPointF(fx_, r.top()), QPointF(r.right(), r.bottom())]))
-        # gain line
-        gy = self.gain_y(c, r)
-        p.setPen(QPen(theme.qcolor(t.good), 1.4 if c.gain_db else 1))
-        p.drawLine(QPointF(r.left(), gy), QPointF(r.right(), gy))
+        # gain line (while the volume curve is being edited, the curve takes its place)
+        if not self.envelope_mode:
+            gy = self.gain_y(c, r)
+            p.setPen(QPen(theme.qcolor(t.good), 1.4 if c.gain_db else 1))
+            p.drawLine(QPointF(r.left(), gy), QPointF(r.right(), gy))
+        if c.envelope or self.envelope_mode:
+            self._draw_envelope_line(p, c, r, t)
         # name
         font = theme.ui_font(8.5)
         font.setBold(True)
@@ -440,6 +499,25 @@ class MixCanvas(QWidget):
                 p.setBrush(QColor("#ffffff"))
                 p.setPen(QPen(QColor(0, 0, 0, 160), 1))
                 p.drawRect(QRectF(hx - HANDLE / 2 + 0.5, r.top() - 0.5, HANDLE - 1, HANDLE - 1))
+        if self.envelope_mode:
+            p.setBrush(QColor("#ffffff"))
+            p.setPen(QPen(theme.qcolor(t.warn), 2))
+            for f, v in c.envelope:
+                if 0 <= f <= c.length:
+                    p.drawEllipse(QPointF(self.frame_to_x(c.start + f), self.env_y(r, v)), ENV_POINT, ENV_POINT)
+
+    def _draw_envelope_line(self, p: QPainter, c: MixClip, r: QRectF, t) -> None:
+        colour = theme.qcolor(t.warn)
+        if self.envelope_mode:
+            guide = QColor(colour)
+            guide.setAlpha(90)
+            pen = QPen(guide, 1)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            y = self.env_y(r, 1.0)
+            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y))      # the level the clip has with no curve at all
+        p.setPen(QPen(colour, 2.2 if self.envelope_mode else 1.4))
+        p.drawPolyline(QPolygonF(self.env_polyline(c, r)))
 
     def _draw_effect(self, p: QPainter, e: EffectSpan, row: Row, t) -> None:
         from ..core import effects as fx
@@ -468,6 +546,8 @@ class MixCanvas(QWidget):
             p.drawRect(QRectF(r.left(), r.top() + 2, 3, r.height() - 4))
 
     def _draw_drop_hint(self, p: QPainter, t) -> None:
+        if self._drop is None:
+            return
         line_id, frame = self._drop
         row = self.row_of("line", line_id) if line_id is not None else self.row_of("add-line", 0)
         if row is None:
@@ -514,13 +594,16 @@ class MixCanvas(QWidget):
         pos = ev.position()
         hit = self.hit_test(pos)
         if ev.button() == Qt.MouseButton.RightButton:
-            if hit.kind.startswith("clip") or hit.kind in ("fade-in", "fade-out", "gain"):
+            if hit.kind.startswith("clip") or hit.kind in ("fade-in", "fade-out", "gain", "env-point", "env-line"):
                 self.select("clip", hit.id)
             elif hit.kind.startswith("effect"):
                 self.select("effect", hit.id)
             self.contextRequested.emit(ev.globalPosition().toPoint(), hit, self.x_to_frame(pos.x()))
             return
         if ev.button() != Qt.MouseButton.LeftButton:
+            return
+        if hit.kind in ("env-point", "env-line"):
+            self._press_envelope(hit, pos)
             return
         if hit.kind in ("clip", "clip-l", "clip-r", "fade-in", "fade-out", "gain"):
             c = self.project.clip(hit.id)
@@ -534,6 +617,27 @@ class MixCanvas(QWidget):
             return
         self.select(None)
         self.place_playhead(self.x_to_frame(pos.x()))
+
+    def _press_envelope(self, hit: Hit, pos: QPointF) -> None:
+        """Take a point of the volume curve, or - on the line between points - add one right there and take that."""
+        pr = self.project
+        if pr is None:
+            return
+        c = pr.clip(hit.id)
+        self.select("clip", c.id)
+        index, started = hit.index, False
+        if hit.kind == "env-line":
+            if len(c.envelope) >= MAX_ENVELOPE_POINTS:
+                return
+            frame = max(0, min(c.length, self.x_to_frame(pos.x()) - c.start))
+            self.editStarting.emit(self._drag_label("env-point"))
+            pr.set_envelope(c.id, [*c.envelope, (frame, envelope_at(c.envelope, frame))])
+            index = next(i for i, (f, _) in enumerate(c.envelope) if f == frame)
+            started = True                                      # the checkpoint is taken: this press is already an edit
+            self.update()
+            self.changed.emit()
+        frame, level = c.envelope[index]
+        self._drag = _Drag("env-point", c.id, pos, started=started, env=c.envelope, index=index, frame=frame, level=level)
 
     def place_playhead(self, frame: int) -> None:
         self.set_playhead(frame)
@@ -577,6 +681,8 @@ class MixCanvas(QWidget):
         elif d.kind == "gain":
             pr.set_clip(d.id, gain_db=d.gain - (pos.y() - d.press.y()) / GAIN_PX_PER_DB)
             tip = f"{pr.clip(d.id).gain_db:+.1f} dB"
+        elif d.kind == "env-point":
+            tip = self._drag_envelope_point(d, pos, dx)
         elif d.kind == "effect":
             pr.move_effect(d.id, self._snap_span(d.start + dx, d.end - d.start, self._snap_points(exclude_effect=d.id)))
             tip = format_time(pr.effect_span(d.id).start / self.sr, short=True)
@@ -591,10 +697,38 @@ class MixCanvas(QWidget):
         if tip:
             QToolTip.showText(ev.globalPosition().toPoint(), tip, self)
 
+    def _drag_envelope_point(self, d: _Drag, pos: QPointF, dx: int) -> str:
+        """Move one point of the volume curve: sideways in time (between its neighbours), up or down in level."""
+        pr = self.project
+        row = self.row_of("line", pr.clip(d.id).line) if pr is not None else None
+        if pr is None or row is None:
+            return ""
+        c = pr.clip(d.id)
+        env, i = list(d.env), d.index
+        lo = max(0, env[i - 1][0] + 1) if i > 0 else 0
+        hi = min(c.length, env[i + 1][0] - 1) if i < len(env) - 1 else c.length
+        frame = d.frame
+        if lo <= hi:
+            wanted = self._snap(c.start + d.frame + dx, self._snap_points()) - c.start
+            frame = max(lo, min(hi, wanted))
+        per_level = self.env_px_per_level(self.clip_rect(c, row))
+        level = max(0.0, min(ENVELOPE_MAX, d.level + (d.press.y() - pos.y()) / per_level))
+        if self.snap:
+            for stop in (0.0, 1.0):
+                if abs(level - stop) * per_level <= 4:
+                    level = stop
+        env[i] = (frame, level)
+        pr.set_envelope(c.id, env)
+        return f"{format_time((c.start + frame) / self.sr, short=True)}   {self._level_text(level)}"
+
+    @staticmethod
+    def _level_text(level: float) -> str:
+        return "−∞ dB" if level < 0.001 else f"{20 * math.log10(level):+.1f} dB"
+
     @staticmethod
     def _drag_label(kind: str) -> str:
         return {"clip": "Move clip", "clip-l": "Trim clip", "clip-r": "Trim clip", "fade-in": "Fade in", "fade-out": "Fade out",
-                "gain": "Clip volume", "effect": "Move effect", "effect-l": "Resize effect",
+                "gain": "Clip volume", "env-point": "Volume curve", "effect": "Move effect", "effect-l": "Resize effect",
                 "effect-r": "Resize effect"}.get(kind, "Edit")
 
     def mouseReleaseEvent(self, ev: QMouseEvent) -> None:
@@ -621,6 +755,7 @@ class MixCanvas(QWidget):
                  "effect-l": Qt.CursorShape.SizeHorCursor, "effect-r": Qt.CursorShape.SizeHorCursor,
                  "fade-in": Qt.CursorShape.SizeHorCursor, "fade-out": Qt.CursorShape.SizeHorCursor,
                  "gain": Qt.CursorShape.SizeVerCursor, "clip": Qt.CursorShape.OpenHandCursor,
+                 "env-point": Qt.CursorShape.SizeAllCursor, "env-line": Qt.CursorShape.CrossCursor,
                  "effect": Qt.CursorShape.OpenHandCursor}.get(hit.kind, Qt.CursorShape.ArrowCursor)
         self.setCursor(shape)
 
@@ -643,6 +778,8 @@ class MixCanvas(QWidget):
             self.deleteRequested.emit()
         elif key == Qt.Key.Key_S and not ev.modifiers():
             self.splitRequested.emit()
+        elif key == Qt.Key.Key_E and not ev.modifiers():
+            self.set_envelope_mode(not self.envelope_mode)
         elif key == Qt.Key.Key_D and ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.duplicateRequested.emit()
         else:
@@ -992,14 +1129,14 @@ class MixBoard(QWidget):
         hl.setSpacing(0)
         hl.addWidget(self.headers, 0, Qt.AlignmentFlag.AlignTop)
         hl.addWidget(self.canvas, 1, Qt.AlignmentFlag.AlignTop)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.scroll.setWidget(inner)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.scroll_area.setWidget(inner)
         self.hbar = QScrollBar(Qt.Orientation.Horizontal)
-        sb = self.scroll.verticalScrollBar().sizeHint().width()
+        sb = self.scroll_area.verticalScrollBar().sizeHint().width()
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -1010,7 +1147,7 @@ class MixBoard(QWidget):
         top.addWidget(self.ruler, 1)
         top.addSpacing(sb)
         lay.addLayout(top)
-        lay.addWidget(self.scroll, 1)
+        lay.addWidget(self.scroll_area, 1)
         bottom = QHBoxLayout()
         bottom.setSpacing(0)
         bottom.addSpacing(HEADER_W)
@@ -1033,6 +1170,12 @@ class MixBoard(QWidget):
         p.end()
 
     # ---- project
+    @property
+    def _proj(self) -> MixProject:
+        """The bound project, for the header actions (which only exist once there is one)."""
+        assert self.project is not None
+        return self.project
+
     def bind(self, project: MixProject) -> None:
         self.project = project
         self.canvas.set_project(project)
@@ -1110,48 +1253,48 @@ class MixBoard(QWidget):
 
     # ---- header actions (each is one undo step)
     def _volume(self, line_id: int, db: float) -> None:
-        self.project.set_line(line_id, volume_db=db)
+        self._proj.set_line(line_id, volume_db=db)
         self.changed.emit()
 
     def _pan(self, line_id: int, pan: float) -> None:
-        self.project.set_line(line_id, pan=pan)
+        self._proj.set_line(line_id, pan=pan)
         self.changed.emit()
 
     def _mute(self, line_id: int, on: bool) -> None:
         self.editStarting.emit(tr("Mute"))
-        self.project.set_line(line_id, mute=on)
+        self._proj.set_line(line_id, mute=on)
         self.canvas.update()
         self.changed.emit()
 
     def _solo(self, line_id: int, on: bool) -> None:
         self.editStarting.emit(tr("Solo"))
-        self.project.set_line(line_id, solo=on)
+        self._proj.set_line(line_id, solo=on)
         self.canvas.update()
         self.changed.emit()
 
     def _rename_line(self, line_id: int, name: str) -> None:
         self.editStarting.emit(tr("Rename line"))
-        self.project.set_line(line_id, name=name)
+        self._proj.set_line(line_id, name=name)
         self.refresh()
         self.changed.emit()
 
     def _remove_line(self, line_id: int) -> None:
         self.editStarting.emit(tr("Remove line"))
-        self.project.remove_line(line_id)
-        if self.canvas.selected and self.canvas.selected[0] == "clip" and not any(c.id == self.canvas.selected[1] for c in self.project.clips):
+        self._proj.remove_line(line_id)
+        if self.canvas.selected and self.canvas.selected[0] == "clip" and not any(c.id == self.canvas.selected[1] for c in self._proj.clips):
             self.canvas.select(None)
         self.refresh()
         self.changed.emit()
 
     def _mute_effect(self, span_id: int, on: bool) -> None:
         self.editStarting.emit(tr("Mute"))
-        self.project.set_effect(span_id, mute=on)
+        self._proj.set_effect(span_id, mute=on)
         self.canvas.update()
         self.changed.emit()
 
     def _remove_effect(self, span_id: int) -> None:
         self.editStarting.emit(tr("Remove effect"))
-        self.project.delete_effect(span_id)
+        self._proj.delete_effect(span_id)
         if self.canvas.selected == ("effect", span_id):
             self.canvas.select(None)
         self.refresh()
@@ -1177,4 +1320,4 @@ class MixBoard(QWidget):
 
     def scroll_to_row(self, row: Optional[Row]) -> None:
         if row is not None:
-            self.scroll.ensureVisible(0, row.y, 0, row.h)
+            self.scroll_area.ensureVisible(0, row.y, 0, row.h)

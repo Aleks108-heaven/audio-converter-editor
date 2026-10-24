@@ -9,7 +9,8 @@ import pytest
 from tonewright.core import effects as fx
 from tonewright.core.common import CancelToken, Cancelled
 from tonewright.core.document import Clip
-from tonewright.core.mixer import (BLOCK, MIN_CLIP, MixProject, balance_gains, custom_filters_in, fade_envelope)
+from tonewright.core.mixer import (BLOCK, ENVELOPE_MAX, MAX_ENVELOPE_POINTS, MIN_CLIP, MixProject, balance_gains,
+                                    clean_envelope, custom_filters_in, envelope_at, fade_envelope)
 from tonewright.core.source import Source
 
 SR = 44100
@@ -30,6 +31,13 @@ def ramp(n: int) -> Clip:
 
 def audio(clip: Clip) -> np.ndarray:
     return clip.read(0, clip.frames)
+
+
+def fades(first: int, count: int, length: int, fade_in: int, fade_out: int) -> np.ndarray:
+    """`fade_envelope` for a fade that is known to exist (it returns None when there is none)."""
+    env = fade_envelope(first, count, length, fade_in, fade_out)
+    assert env is not None
+    return env
 
 
 @pytest.fixture
@@ -184,8 +192,8 @@ def test_removing_a_line_removes_its_clips(project):
 # ------------------------------------------------------------------ fades and transitions
 def test_fade_envelope_is_equal_power_and_exact_at_the_ends():
     n = 1000
-    fade_in = fade_envelope(0, n, n, n, 0)
-    fade_out = fade_envelope(0, n, n, 0, n)
+    fade_in = fades(0, n, n, n, 0)
+    fade_out = fades(0, n, n, 0, n)
     assert fade_in[0] == pytest.approx(0.0) and fade_in[-1] == pytest.approx(1.0, abs=2e-3)
     assert fade_out[0] == pytest.approx(1.0) and fade_out[-1] == pytest.approx(0.0, abs=2e-3)
     np.testing.assert_allclose(fade_in ** 2 + fade_out ** 2, 1.0, atol=1e-5)
@@ -198,7 +206,7 @@ def test_fades_are_applied_per_block_correctly(project):
     project.add_clip(line.id, stereo(1.0, n), 0)
     project.set_clip(project.clips[0].id, fade_in=BLOCK + 500, fade_out=BLOCK + 500)
     out = audio(project.render())[:, 0]
-    expected = fade_envelope(0, n, n, BLOCK + 500, BLOCK + 500)
+    expected = fades(0, n, n, BLOCK + 500, BLOCK + 500)
     np.testing.assert_allclose(out, expected, atol=1e-6)
 
 
@@ -227,6 +235,123 @@ def test_clips_on_different_lines_can_crossfade_too(project):
     project.add_clip(a.id, stereo(0.5, 10000), 0)
     second = project.add_clip(b.id, stereo(0.5, 10000), 7000)
     assert project.crossfade(second.id) and project.clip(second.id).fade_in == 3000
+
+
+# ------------------------------------------------------------------ the volume curve of a clip
+def test_a_volume_curve_joins_its_points_with_straight_lines_and_holds_the_ends(project):
+    line = project.add_line()
+    clip = project.add_clip(line.id, stereo(1.0, 4000), 0)
+    project.set_envelope(clip.id, [(1000, 0.0), (2000, 1.0), (3000, 0.5)])
+    out = audio(project.render())[:, 0]
+    assert np.allclose(out[:1000], 0.0) and out[1500] == pytest.approx(0.5, abs=1e-3)
+    assert out[2000] == pytest.approx(1.0) and out[2500] == pytest.approx(0.75, abs=1e-3) and np.allclose(out[3000:], 0.5)
+
+
+def test_a_clip_without_a_curve_is_untouched_and_the_curve_scales_with_fades_and_levels(project):
+    line = project.add_line()
+    clip = project.add_clip(line.id, stereo(0.5, 2000), 0)
+    assert clip.envelope == () and envelope_at(clip.envelope, 100) == 1.0
+    project.set_envelope(clip.id, [(0, 0.5)])                                      # a single point is a constant level
+    project.set_clip(clip.id, gain_db=-6.0206, fade_in=1000)
+    out = audio(project.render())[:, 0]
+    expected = 0.5 * 0.5 * 0.5 * fades(0, 2000, 2000, 1000, 0)
+    np.testing.assert_allclose(out, expected, atol=1e-4)
+
+
+def test_the_curve_is_exact_across_block_boundaries(project):
+    line = project.add_line()
+    n = BLOCK * 3
+    clip = project.add_clip(line.id, stereo(1.0, n), 0)
+    points = [(BLOCK - 5, 1.0), (BLOCK * 2 + 9, 0.0)]
+    project.set_envelope(clip.id, points)
+    out = audio(project.render())[:, 0]
+    k = np.arange(n)
+    np.testing.assert_allclose(out, np.interp(k, [p[0] for p in points], [p[1] for p in points]), atol=1e-6)
+
+
+def test_a_curve_can_fade_a_clip_to_silence_and_back_for_a_smooth_transition(project):
+    a, b = project.add_line(), project.add_line()
+    first = project.add_clip(a.id, stereo(0.5, 6000), 0)
+    second = project.add_clip(b.id, stereo(0.5, 6000), 3000)
+    project.set_envelope(first.id, [(3000, 1.0), (6000, 0.0)])
+    project.set_envelope(second.id, [(0, 0.0), (3000, 1.0)])
+    out = audio(project.render())[:, 0]
+    assert np.allclose(out[:3000], 0.5) and np.allclose(out[3000:9000], 0.5, atol=2e-3)      # straight cross-fade: steady
+
+
+def test_curve_points_are_cleaned_sorted_and_limited():
+    assert clean_envelope([(30, 1.0), (10, 0.5), (10, 0.7)]) == ((10, 0.7), (30, 1.0))
+    assert clean_envelope([(5, 9.0), (6, -3.0)]) == ((5, ENVELOPE_MAX), (6, 0.0))
+    assert clean_envelope([("x", 1), (1,), None, (2, float("nan")), (3, float("inf")), (4.9, "0.25")]) == ((4, 0.25),)
+    assert clean_envelope(None) == () and clean_envelope(5) == () and clean_envelope([]) == ()
+    assert len(clean_envelope([(i, 1.0) for i in range(MAX_ENVELOPE_POINTS + 50)])) == MAX_ENVELOPE_POINTS
+
+
+def test_trimming_keeps_the_curve_on_the_same_part_of_the_audio_and_never_loses_points(project):
+    line = project.add_line()
+    clip = project.add_clip(line.id, ramp(4000), 100)
+    project.set_envelope(clip.id, [(1000, 0.2), (3000, 1.0)])
+    before = audio(project.render())
+    project.trim_start(clip.id, 1600)                                              # cuts 1500 frames off the front
+    assert clip.envelope == ((-500, 0.2), (1500, 1.0))
+    after = audio(project.render())                                                # the audio has not moved, only its start
+    assert not after[:1600].any()
+    np.testing.assert_allclose(after[1600:], before[1600:], atol=1e-6)
+    project.trim_start(clip.id, 100)                                                # ...and bring them back
+    assert clip.envelope == ((1000, 0.2), (3000, 1.0))
+    np.testing.assert_allclose(audio(project.render()), before, atol=1e-6)
+
+
+def test_splitting_gives_each_half_its_part_of_the_curve(project):
+    line = project.add_line()
+    clip = project.add_clip(line.id, stereo(1.0, 4000), 0)
+    project.set_envelope(clip.id, [(0, 0.0), (4000, 1.0)])
+    before = audio(project.render())
+    left, right = project.split_clip(clip.id, 1000)
+    np.testing.assert_allclose(audio(project.render()), before, atol=1e-6)
+    assert right.envelope == ((-1000, 0.0), (3000, 1.0)) and left.envelope == ((0, 0.0), (4000, 1.0))
+
+
+def test_the_curve_is_one_undo_step_and_survives_a_duplicate(project):
+    line = project.add_line()
+    clip = project.add_clip(line.id, stereo(1.0, 1000), 0)
+    project.checkpoint("Volume curve")
+    project.set_envelope(clip.id, [(0, 1.0), (500, 0.0)])
+    copy = project.duplicate_clip(clip.id)
+    assert copy.envelope == clip.envelope
+    project.undo()
+    assert project.clip(clip.id).envelope == ()
+
+
+def test_the_curve_is_saved_in_the_project_and_bad_data_in_a_file_is_ignored(project, tmp_path):
+    line = project.add_line()
+    source = ramp(5000)
+    clip = project.add_clip(line.id, source, 0, "a", "C:/music/a.wav")
+    project.set_envelope(clip.id, [(100, 0.25), (4000, 1.5)])
+    path = tmp_path / "mix.twmix"
+    project.save(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["clips"][0]["envelope"] == [[100, 0.25], [4000, 1.5]]
+    loaded = MixProject.from_dict(data, loader({"C:/music/a.wav": source}))
+    assert loaded.clips[0].envelope == ((100, 0.25), (4000, 1.5))
+    np.testing.assert_allclose(audio(loaded.render()), audio(project.render()), atol=1e-6)
+    for junk in ("loud", 7, [["a", "b"]], {"x": 1}, [[1, 2, 3]]):
+        data["clips"][0]["envelope"] = junk
+        assert MixProject.from_dict(data, loader({"C:/music/a.wav": source})).clips[0].envelope == ()
+    del data["clips"][0]["envelope"]                                               # a project from before the curve existed
+    assert MixProject.from_dict(data, loader({"C:/music/a.wav": source})).clips[0].envelope == ()
+
+
+def test_a_live_mix_hears_a_changed_curve(project):
+    line = project.add_line()
+    clip = project.add_clip(line.id, stereo(1.0, 3000), 0)
+    project.add_effect("amplify", amplify_params(0.0), 0, 3000)
+    cache: dict = {}
+    first = project.live(cache)
+    project.set_envelope(clip.id, [(0, 0.5)])
+    second = project.live(cache)
+    assert np.allclose(first.read(0, 100), 1.0) and np.allclose(second.read(0, 100), 0.5)
+    assert first._spans[0].key != second._spans[0].key                           # the effect is rendered again, not reused
 
 
 # ------------------------------------------------------------------ effect spans (gain: -6 dB is x0.501)
