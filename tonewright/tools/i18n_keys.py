@@ -24,6 +24,9 @@ ACTION_TEXTS = ["Waveform", "Spectral", "Envelope", "Waveform view", "Spectral v
                 "Silence…", "Tone…", "Noise…", "Dial tones…", "Speech…", "B", "KB", "MB", "GB",
                 # multitrack: drag labels used as undo steps, default line names
                 "Move clip", "Trim clip", "Clip volume", "Move effect", "Resize effect", "Edit", "Line {}",
+                # names a screen reader speaks for fields whose label sits beside them (set through a variable, so not found in the code)
+                "Selection start", "Selection end", "Selection length", "Track number", "Total tracks", "Disc number",
+                "Total discs",
                 # words that need their own wording as a document name or a short button
                 "document|Mix", "short|Mute", "menu|Mix", "mode|Edit"]
 ERROR_CALLEES = {"ItemResult", "FileExistsError", "ValueError", "RuntimeError", "AudioDeviceError", "FFmpegError",

@@ -72,6 +72,8 @@ class ItemResult:
     output: Optional[Path] = None
     message: str = ""
     seconds: float = 0.0
+    problem: Optional[access.WriteProblem] = None   # why the file could not be written, when that was the reason
+    warning: str = ""                                # the file was written, but something short of that failed (its tags)
 
 
 def probe_item(path: str | Path, *, read_tags: bool = True) -> ConvertItem:
@@ -183,16 +185,21 @@ def build_filter(item: ConvertItem, opts: ConvertOptions, length: float,
 
 
 # ------------------------------------------------------------------ tags
-def _post_process_tags(out: Path, tags: tagmod.TagSet, opts: ConvertOptions) -> None:
+def _post_process_tags(out: Path, tags: tagmod.TagSet, opts: ConvertOptions) -> str:
+    """Write the tags into the converted file. Tagging is best-effort, the audio itself converted fine, so a failure
+    does not fail the conversion; it comes back as one sentence for the caller to show, and "" means all went well."""
     if not opts.keep_tags or tags.is_empty():
-        return
+        return ""
     key = opts.settings.format
     if key not in formats.TAG_CAPABLE or key == "wav" or not tagmod.can_write(out):
-        return
+        return ""
     try:
         tagmod.write_tags(out, tags)
-    except Exception:  # tagging is best-effort: the audio itself converted fine
-        pass
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        if isinstance(exc, OSError):
+            return access.one_line(access.diagnose_modify(out, exc), out.name)
+        return str(exc).strip().splitlines()[0] if str(exc).strip() else repr(exc)
+    return ""
 
 
 def _ffmpeg_metadata(tags: tagmod.TagSet, opts: ConvertOptions) -> Optional[dict]:
@@ -204,7 +211,8 @@ def _ffmpeg_metadata(tags: tagmod.TagSet, opts: ConvertOptions) -> Optional[dict
 # ------------------------------------------------------------------ single item
 def convert_item(item: ConvertItem, out: Path, opts: ConvertOptions, *,
                  progress: Optional[ProgressFn] = None, cancel: Optional[CancelToken] = None,
-                 pause: Optional[PauseToken] = None) -> Path:
+                 pause: Optional[PauseToken] = None, on_warning: Optional[Callable[[str], None]] = None) -> Path:
+    """Convert one item to `out`. `on_warning` hears about anything that went wrong short of failing (tags not written)."""
     s = opts.settings
     args = formats.build_args(s, item.source_sr, item.source_channels)
     chain = build_filter(item, opts, item.length, cancel)
@@ -218,7 +226,9 @@ def convert_item(item: ConvertItem, out: Path, opts: ConvertOptions, *,
     else:
         ff.convert_file(item.path, out, args, stream_index=item.stream_index, audio_filter=chain,
                         duration=item.duration, metadata=meta, progress=progress, cancel=cancel, pause=pause)
-    _post_process_tags(out, item.tags, opts)
+    warning = _post_process_tags(out, item.tags, opts)
+    if warning and on_warning:
+        on_warning(warning)
     return out
 
 
@@ -246,7 +256,7 @@ def item_pcm(item: ConvertItem, sr: int, channels: int, cancel: Optional[CancelT
 
 def convert_merged(items: list[ConvertItem], out: Path, opts: ConvertOptions, *,
                    progress: Optional[ProgressFn] = None, cancel: Optional[CancelToken] = None,
-                   pause: Optional[PauseToken] = None) -> Path:
+                   pause: Optional[PauseToken] = None, on_warning: Optional[Callable[[str], None]] = None) -> Path:
     """Join several items into one file."""
     first = items[0]
     s = opts.settings
@@ -269,7 +279,9 @@ def convert_merged(items: list[ConvertItem], out: Path, opts: ConvertOptions, *,
     out.parent.mkdir(parents=True, exist_ok=True)
     ff.encode_pcm(stream(), sr, channels, out, args, total_frames=int(total_len * sr), progress=progress,
                   cancel=cancel, pause=pause, audio_filter=chain, metadata=_ffmpeg_metadata(tags, opts))
-    _post_process_tags(out, tags, opts)
+    warning = _post_process_tags(out, tags, opts)
+    if warning and on_warning:
+        on_warning(warning)
     return out
 
 
@@ -305,12 +317,18 @@ def convert_all(items: list[ConvertItem], opts: ConvertOptions, *,
     return results
 
 
-def _reason(exc: BaseException) -> str:
-    """One line saying why a conversion failed. A file that could not be written gets the real reason (a missing
-    folder, no permission, Windows Security) in place of FFmpeg's bare "No such file or directory"."""
+def _explain(exc: BaseException) -> tuple[str, Optional[access.WriteProblem]]:
+    """One line saying why a conversion failed, and the write problem behind it when there was one. A file that could
+    not be written gets the real reason (a missing folder, no permission, Windows Security) in place of FFmpeg's bare
+    "No such file or directory"."""
     if isinstance(exc, ff.OutputError):
-        return access.one_line(access.diagnose(exc.path, exc.detail), exc.path.name)
-    return str(exc).strip().splitlines()[0] if str(exc).strip() else repr(exc)
+        problem = access.diagnose_output_error(exc)
+        return access.one_line(problem, exc.path.name), problem
+    return (str(exc).strip().splitlines()[0] if str(exc).strip() else repr(exc)), None
+
+
+def _reason(exc: BaseException) -> str:
+    return _explain(exc)[0]
 
 
 def _run_one(n: int, item: ConvertItem, opts: ConvertOptions, taken: set[Path], weight: float,
@@ -328,12 +346,14 @@ def _run_one(n: int, item: ConvertItem, opts: ConvertOptions, taken: set[Path], 
             if on_overall:
                 on_overall((done_w + weight * frac) / total_w)
 
-        convert_item(item, out, opts, progress=prog, cancel=cancel, pause=pause)
-        return ItemResult(item, "done", out, seconds=time.time() - started)
+        warnings: list[str] = []
+        convert_item(item, out, opts, progress=prog, cancel=cancel, pause=pause, on_warning=warnings.append)
+        return ItemResult(item, "done", out, seconds=time.time() - started, warning=" ".join(warnings))
     except Cancelled:
         return ItemResult(item, "cancelled", message="Cancelled")
     except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
-        return ItemResult(item, "error", message=_reason(exc))
+        message, problem = _explain(exc)
+        return ItemResult(item, "error", message=message, problem=problem)
 
 
 def _run_merged(items, opts, on_item_progress, on_overall, on_result, cancel, pause) -> list[ItemResult]:
@@ -351,13 +371,14 @@ def _run_merged(items, opts, on_item_progress, on_overall, on_result, cancel, pa
                 for n in range(len(items)):
                     on_item_progress(n, frac)
 
-        convert_merged(items, out, opts, progress=prog, cancel=cancel, pause=pause)
-        results = [ItemResult(i, "done", out, seconds=time.time() - started) for i in items]
+        warnings: list[str] = []
+        convert_merged(items, out, opts, progress=prog, cancel=cancel, pause=pause, on_warning=warnings.append)
+        results = [ItemResult(i, "done", out, seconds=time.time() - started, warning=" ".join(warnings)) for i in items]
     except Cancelled:
         results = [ItemResult(i, "cancelled", message="Cancelled") for i in items]
     except Exception as exc:  # noqa: BLE001
-        msg = _reason(exc)
-        results = [ItemResult(i, "error", message=msg) for i in items]
+        msg, problem = _explain(exc)
+        results = [ItemResult(i, "error", message=msg, problem=problem) for i in items]
     for n, res in enumerate(results):
         if on_result:
             on_result(n, res)

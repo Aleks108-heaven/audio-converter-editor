@@ -1,7 +1,9 @@
 """Saying why a file could not be written: Windows Security's Controlled folder access, a missing folder, no permission."""
 from __future__ import annotations
 
+import errno
 import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -10,6 +12,7 @@ import pytest
 
 from tonewright import i18n, paths
 from tonewright.core import access, ffmpeg
+from tonewright.core import tags as tagmod
 from tonewright.core.convert import ConvertItem, ConvertOptions, convert_all
 from tonewright.core.formats import EncodeSettings
 
@@ -145,3 +148,103 @@ def test_a_batch_conversion_reports_the_reason_in_the_row(tmp_path, monkeypatch)
     (result,) = convert_all([item], opts)
     assert result.status == "error" and "Windows Security" in result.message and "out" in result.message
     monkeypatch.setattr(ffmpeg, "convert_file", real)
+
+
+# ------------------------------------------------------------------ changing a file that already exists (its tags)
+def _existing_file(tmp_path, name="x.m4a"):
+    path = tmp_path / name
+    path.write_bytes(b"audio")
+    return path
+
+
+def test_tags_refused_by_windows_security_are_recognised_from_the_error_number(tmp_path, monkeypatch):
+    """The laptop bug: the tag writer was told only "[Errno 9] Bad file descriptor", while the test file could be made."""
+    target = _existing_file(tmp_path)
+    refused = OSError(errno.EBADF, "Bad file descriptor")
+    monkeypatch.setattr(paths, "IS_WINDOWS", True)
+    monkeypatch.setattr(access, "controlled_folder_access", lambda: True)
+    problem = access.diagnose_modify(target, refused)
+    assert problem.kind == "windows-security" and problem.folder == tmp_path and len(problem.programs) == 2
+    assert problem.reason == "Bad file descriptor" and problem.kind in access.BLOCKED_KINDS
+    line = access.one_line(problem, target.name)
+    assert "Windows Security" in line and "Errno" not in line
+    monkeypatch.setattr(access, "controlled_folder_access", lambda: None)         # could not be asked: still offer the hint
+    assert access.diagnose_modify(target, refused).kind == "windows-security"
+    monkeypatch.setattr(access, "controlled_folder_access", lambda: False)        # protection is off: not the cause
+    assert access.diagnose_modify(target, refused).kind == "unknown"
+
+
+@pytest.mark.parametrize("number", [errno.EBADF, errno.EACCES, errno.EPERM])
+def test_every_way_windows_security_can_refuse_a_write_is_recognised(tmp_path, monkeypatch, number):
+    monkeypatch.setattr(paths, "IS_WINDOWS", True)
+    monkeypatch.setattr(access, "controlled_folder_access", lambda: True)
+    assert access.diagnose_modify(_existing_file(tmp_path), OSError(number, "refused")).kind == "windows-security"
+
+
+def test_other_errors_are_not_blamed_on_windows_security(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "IS_WINDOWS", True)
+    monkeypatch.setattr(access, "controlled_folder_access", lambda: True)
+    problem = access.diagnose_modify(_existing_file(tmp_path), OSError(errno.ENOSPC, "No space left on device"))
+    assert problem.kind == "unknown" and problem.reason == "No space left on device"
+    monkeypatch.setattr(paths, "IS_WINDOWS", False)                                # and never on a Mac or Linux
+    assert access.diagnose_modify(_existing_file(tmp_path), OSError(errno.EBADF, "Bad file descriptor")).kind == "unknown"
+
+
+def test_a_read_only_file_is_reported_as_such(tmp_path, monkeypatch):
+    monkeypatch.setattr(access, "controlled_folder_access", lambda: False)
+    target = _existing_file(tmp_path)
+    os.chmod(target, stat.S_IREAD)
+    try:
+        problem = access.diagnose_modify(target, PermissionError(errno.EACCES, "Permission denied"))
+    finally:
+        os.chmod(target, stat.S_IREAD | stat.S_IWRITE)
+    assert problem.kind == "not-writable" and problem.reason == "Permission denied"
+
+
+def test_an_output_error_that_carries_the_system_error_is_read_by_its_number(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "IS_WINDOWS", True)
+    monkeypatch.setattr(access, "controlled_folder_access", lambda: True)
+    cause = OSError(errno.EBADF, "Bad file descriptor")
+    carried = ffmpeg.OutputError("Could not write the tags of x.m4b", "Bad file descriptor", tmp_path / "x.m4b", cause=cause)
+    assert access.diagnose_output_error(carried).kind == "windows-security"
+    plain = ffmpeg.OutputError("Could not convert", SCREENSHOT, tmp_path / "x.mp3")      # FFmpeg's own words: as before
+    assert access.diagnose_output_error(plain).kind == "ffmpeg-blocked"
+
+
+# ------------------------------------------------------------------ what a conversion reports back
+def _blocked_batch(tmp_path, monkeypatch, *, fmt="mp3", tags=None):
+    src = write_wav(tmp_path / "a.wav", sine(220, 0.5)[:, None])
+    item = ConvertItem(path=src, name="a", duration=0.5, sr=SR, channels=1, tags=tags or tagmod.TagSet())
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.setattr(paths, "IS_WINDOWS", True)
+    monkeypatch.setattr(access, "controlled_folder_access", lambda: True)
+    return item, ConvertOptions(settings=EncodeSettings(format=fmt), out_dir=out_dir)
+
+
+def test_a_refused_file_hands_the_problem_back_not_just_a_sentence(tmp_path, monkeypatch):
+    item, opts = _blocked_batch(tmp_path, monkeypatch)
+
+    def blocked(in_path, out_path, *a, **kw):
+        raise ffmpeg.OutputError("Could not convert a.wav", SCREENSHOT, out_path)
+    monkeypatch.setattr(ffmpeg, "convert_file", blocked)
+    (result,) = convert_all([item], opts)
+    assert result.status == "error" and result.problem is not None and result.problem.kind in access.BLOCKED_KINDS
+    assert len(result.problem.programs) == 2                                 # what the screen needs to say what to allow
+
+
+def test_tags_that_cannot_be_written_come_back_as_a_warning_not_as_silence(tmp_path, monkeypatch):
+    item, opts = _blocked_batch(tmp_path, monkeypatch, tags=tagmod.TagSet(title="Song", artist="Band"))
+
+    def refuse(*a, **kw):
+        raise OSError(errno.EBADF, "Bad file descriptor")
+    monkeypatch.setattr(tagmod, "write_tags", refuse)
+    (result,) = convert_all([item], opts)
+    assert result.status == "done" and result.output.is_file()               # the audio is fine
+    assert "Windows Security" in result.warning and "Errno" not in result.warning
+
+
+def test_a_conversion_whose_tags_were_written_has_no_warning(tmp_path, monkeypatch):
+    item, opts = _blocked_batch(tmp_path, monkeypatch, tags=tagmod.TagSet(title="Song"))
+    (result,) = convert_all([item], opts)
+    assert result.status == "done" and result.warning == "" and tagmod.read_tags(result.output).title == "Song"

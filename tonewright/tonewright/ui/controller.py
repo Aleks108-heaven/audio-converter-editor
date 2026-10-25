@@ -32,6 +32,7 @@ from .stage import Stage
 from .state import AppState, LibraryItem, decode_item, probe_path
 from .tasks import run_task
 from .transport import TransportBar
+from .write_problem import show_write_problem
 from ..i18n import tr
 
 def open_filter() -> str:
@@ -111,7 +112,7 @@ class Controller(QObject):
 
     def error(self, title: str, exc: BaseException | str) -> None:
         if isinstance(exc, ffmpeg.OutputError):
-            self._show_write_problem(title, access.diagnose(exc.path, exc.detail))
+            self._show_write_problem(title, access.diagnose_output_error(exc))
             return
         if isinstance(exc, ffmpeg.FFmpegError) and exc.detail:
             exc = exc.detail
@@ -119,42 +120,7 @@ class Controller(QObject):
         QMessageBox.warning(self.win, tr(title), text if len(text) < 900 else text[:900] + "…")
 
     def _show_write_problem(self, title: str, problem: access.WriteProblem) -> None:
-        """A file could not be written. Say why, and for Windows Security (Controlled folder access) say what to
-        allow and offer to open the page where that is done."""
-        folder = problem.folder
-        blocked = problem.kind in ("windows-security", "ffmpeg-blocked")
-        box = QMessageBox(self.win)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle(tr(title))
-        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        if problem.kind == "folder-missing":
-            box.setText(tr(f"The folder {folder} does not exist."))
-            box.setInformativeText(tr("Choose another folder, or create this one."))
-        elif blocked:
-            box.setText(tr(f"Windows Security blocked Tonewright from saving to {folder}."))
-            box.setInformativeText(
-                tr("This is Controlled folder access, the ransomware protection in Windows Security. It only lets programs "
-                   "you have approved change files in Documents, Music, Videos, Pictures and Desktop.\n\nTo allow "
-                   "Tonewright: open Windows Security, then Virus & threat protection > Ransomware protection > Allow an "
-                   "app through Controlled folder access > Add an allowed app > Browse all apps, and add these two "
-                   "programs:") + "\n\n" + "\n".join(problem.programs)
-                + "\n\n" + tr("Then save again. You can also save into a folder that is not protected."))
-        elif problem.kind == "not-writable":
-            box.setText(tr(f"Tonewright is not allowed to write to {folder}."))
-            hint = (tr("On a Mac, allow it under System Settings > Privacy & Security > Files and Folders.")
-                    if paths_module.IS_MAC else tr("Check that the folder is not read-only, or choose another folder."))
-            box.setInformativeText((problem.reason + "\n\n" if problem.reason else "") + hint)
-        else:
-            box.setText(tr(f"Could not write to {folder}."))
-            box.setInformativeText((problem.reason or "").strip()[:700])
-        open_security = box.addButton(tr("Open Windows Security"), QMessageBox.ButtonRole.ActionRole) if blocked else None
-        box.addButton(QMessageBox.StandardButton.Ok)
-        box.exec()
-        if open_security is not None and box.clickedButton() is open_security:
-            try:
-                os.startfile(access.CFA_LINK)  # type: ignore[attr-defined]
-            except (AttributeError, OSError):
-                pass
+        show_write_problem(self.win, title, problem)
 
     def _range(self) -> tuple[int, int]:
         doc = self.doc
@@ -1052,16 +1018,25 @@ class Controller(QObject):
         cv = ConvertItem(path=None, name=item.name, duration=doc.duration, sr=doc.sr, channels=doc.channels,
                          tags=item.tags.copy(), doc=snap, frame_range=frame_range)
         opts = ConvertOptions(settings=settings, keep_tags=True)
+        warnings: list[str] = []
 
         def job(progress, cancel):
-            return convert_item(cv, path, opts, progress=progress, cancel=cancel)
+            return convert_item(cv, path, opts, progress=progress, cancel=cancel, on_warning=warnings.append)
 
         try:
             ok, _ = run_task(self.win, tr("Saving"), job, message=tr(f"Writing {path.name}…"), delay_ms=250)
         except Exception as exc:  # noqa: BLE001
             self.error(tr("Save"), exc)
             return False
+        self._save_warning = warnings[0] if ok and warnings else ""
         return bool(ok)
+
+    _save_warning = ""
+
+    def _saved_text(self, name: str) -> str:
+        """What to say after a save: if the audio was saved but its tags were not, say so too."""
+        warning, self._save_warning = self._save_warning, ""
+        return tr(f"Saved {name}, but its tags were not written: {warning}") if warning else tr(f"Saved {name}")
 
     def save(self, item: Optional[LibraryItem] = None) -> bool:
         item = item or self.item
@@ -1097,7 +1072,7 @@ class Controller(QObject):
         item.doc.mark_saved()
         item.tags_orig = item.tags.copy()
         self._after_save(item)
-        self.info(tr(f"Saved {item.path.name}"))
+        self.info(self._saved_text(item.path.name))
         return True
 
     def save_as(self, item: Optional[LibraryItem] = None) -> bool:
@@ -1135,7 +1110,7 @@ class Controller(QObject):
             item.tags_orig = item.tags.copy()
             self._confirmed_overwrite.add(item.id)
             self._after_save(item)
-        self.info(tr(f"Saved {path.name}"))
+        self.info(self._saved_text(path.name))
         return True
 
     def _after_save(self, item: LibraryItem) -> None:

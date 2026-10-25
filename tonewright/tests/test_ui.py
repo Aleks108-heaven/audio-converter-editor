@@ -84,6 +84,9 @@ def ui(qapp, tmp_path, monkeypatch):
     cfg = tmp_path / "cfg"
     monkeypatch.setenv("APPDATA", str(cfg))
     FakeOutput.instances.clear()
+    # the offscreen platform has no real fonts, so what the parts say they need in pixels means nothing here: the test
+    # window never folds the library by itself (the tests of that fix the room needed, see test_panels.py)
+    monkeypatch.setattr(MainWindow, "_room_needed", lambda self: 0)
     settings = Settings(cfg / "settings.json")
     state = AppState(settings, Favorites(cfg / "fav.json"), Player(stream_factory=FakeOutput))
     win = MainWindow(state)

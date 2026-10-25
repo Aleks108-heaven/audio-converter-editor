@@ -23,6 +23,7 @@ from ..core.audiobook import BookOptions, Part
 from ..core.convert import convert_all
 from ..core.timefmt import format_size, format_time
 from . import icons, theme
+from .adaptive import AdaptiveBar
 from .audiobook_panel import AudiobookPanel
 from .controller import Controller
 from .convert_panel import ConvertPanel
@@ -38,6 +39,7 @@ from .tags_panel import TagsPage
 from .tasks import run_task
 from .transport import TransportBar
 from .widgets import divider, icon_button, make_button
+from .write_problem import show_write_problem
 from ..i18n import tr
 
 MODE_INFO = [("convert", "Convert", "convert"), ("edit", "Edit", "waveform"), ("multitrack", "Multitrack", "layers"),
@@ -88,6 +90,8 @@ class MainWindow(QMainWindow):
         saved = state.settings.get("panels") or {}
         self._panels = {"library": bool(saved.get("library", True)), "side": bool(saved.get("side", True))}   # what the user chose
         self._panel_width = {"library": 310, "side": 370}                # how wide each was last time it was open
+        self._narrow = False                    # too narrow for the library, the middle and the right panel side by side
+        self._library_override = False          # the user opened the library by hand although the window is narrow
 
         self._build_actions()
         self._build_ui()
@@ -130,7 +134,6 @@ class MainWindow(QMainWindow):
         # created before the controller exists, so every slot is looked up lazily
         c = lambda name: (lambda *a: self._command(name, *a))
         act = self._act
-        S = QKeySequence
         act("new", "New…", c("new_document"), "Ctrl+N", "file-new", "New empty file")
         act("open", "Open…", c("open_dialog"), "Ctrl+O", "open", "Open audio files")
         act("import_video", "Import audio from video…", c("import_video_dialog"), None, "film")
@@ -290,7 +293,7 @@ class MainWindow(QMainWindow):
             hl.addWidget(b)
 
         # ---- edit toolbar
-        self.toolbar = QWidget()
+        self.toolbar = AdaptiveBar()
         self.toolbar.setObjectName("toolbar")
         self.toolbar.setStyleSheet(f"#toolbar {{ background: {theme.current().bg0}; border-bottom: 1px solid {theme.current().line}; }}")
         tl = QHBoxLayout(self.toolbar)
@@ -354,6 +357,7 @@ class MainWindow(QMainWindow):
         tl.addLayout(self.recent_box)
         tl.addStretch(1)
         self.rebuild_recent()
+        self.toolbar.resized.connect(self._fit_recent)
 
         # ---- central layout
         self.center_stack = QStackedWidget()
@@ -417,6 +421,7 @@ class MainWindow(QMainWindow):
         self.status_msg = QLabel("")
         self.status_right = QLabel("")
         self.status_right.setProperty("role", "faint")
+        self.status_right.setContentsMargins(0, 0, 14, 0)      # flush against the window edge, the last letters were cut off
         self.statusBar().addWidget(self.status_msg, 1)
         self.statusBar().addPermanentWidget(self.status_right)
         self.statusBar().setSizeGripEnabled(False)
@@ -603,6 +608,7 @@ class MainWindow(QMainWindow):
         for k, b in self.mode_buttons.items():
             b.setChecked(k == mode)
         self.center_stack.setCurrentIndex(CENTER_PAGE.get(mode, 0))
+        self._update_narrow()
         if mode == "multitrack":
             self.ctl.stop_playback()
         else:
@@ -629,13 +635,44 @@ class MainWindow(QMainWindow):
     def _show_panel(self, key: str, on: bool) -> None:
         """The user folded the library ("library") or the panel on the right ("side") away, or brought it back."""
         self._panels[key] = on
+        if key == "library":
+            self._library_override = on and self._narrow           # asked for by hand: keep it although there is little room
         self.state.settings.set("panels", dict(self._panels))
         self._apply_panels()
+
+    def _room_needed(self) -> Optional[int]:
+        """The width at which the library, the page in the middle and the panel on the right all fit side by side (None
+        while the window is still being built). Each part says how much it needs, in the fonts of the day."""
+        stack = getattr(self, "center_stack", None)
+        if stack is None or stack.currentWidget() is None or not hasattr(self, "right_wrap"):
+            return None
+        side = self.right_wrap.minimumWidth() if self._panels["side"] and self.state.mode != "tags" else 0
+        return self.library.minimumSizeHint().width() + stack.currentWidget().minimumSizeHint().width() + side + 60   # + handles, margins
+
+    def _update_narrow(self) -> bool:
+        """Whether the window is too narrow for the library, the middle and the panel on the right side by side (the
+        middle page says how much it needs). True if that changed. A narrow window folds the library by itself and
+        opens it again when there is room; what the user chose is kept."""
+        needed = self._room_needed()
+        if needed is None:
+            return False
+        narrow = self.width() < needed
+        if not narrow:
+            self._library_override = False
+        changed = narrow != self._narrow
+        self._narrow = narrow
+        return changed
+
+    def resizeEvent(self, event) -> None:               # noqa: N802
+        super().resizeEvent(event)
+        if self._update_narrow():
+            self._apply_panels()
 
     def _apply_panels(self) -> None:
         """Show or hide the panels as the user chose. The panel on the right is never shown in Tags mode, which has
         its own editor, whatever was chosen; the choice comes back when another mode is selected."""
-        wanted = {"library": self._panels["library"], "side": self._panels["side"] and self.state.mode != "tags"}
+        folded = self._narrow and not self._library_override
+        wanted = {"library": self._panels["library"] and not folded, "side": self._panels["side"] and self.state.mode != "tags"}
         for key, widget in (("library", self.library), ("side", self.right_wrap)):
             if wanted[key] != widget.isHidden():                         # already as it should be
                 continue
@@ -655,9 +692,10 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda s=sizes: self._set_splitter_sizes(s))    # the splitter finishes showing it after this returns
         for key, name in (("library", "toggle_library"), ("side", "toggle_side")):
             action = self.actions[name]
-            if action.isChecked() != self._panels[key]:                  # e.g. restored from the settings
+            shown = wanted[key] if key == "library" else self._panels[key]     # the library button says what is on screen
+            if action.isChecked() != shown:                              # e.g. restored from the settings
                 action.blockSignals(True)
-                action.setChecked(self._panels[key])
+                action.setChecked(shown)
                 action.blockSignals(False)
         self.actions["toggle_side"].setEnabled(self.state.mode != "tags")
 
@@ -789,6 +827,29 @@ class MainWindow(QMainWindow):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False, i=eid: self.ctl.open_effect(i))
             self.recent_box.addWidget(b)
+        self._fit_recent()
+
+    def _fit_recent(self) -> None:
+        """Show as many of the recent-effect buttons as there is room for, so that none is cut in half."""
+        if not hasattr(self, "toolbar"):
+            return
+        lay = self.toolbar.layout()
+        margins = lay.contentsMargins()
+        used = margins.left() + margins.right()
+        for i in range(lay.count()):
+            item = lay.itemAt(i)
+            if item.layout() is not self.recent_box:
+                used += item.sizeHint().width() + lay.spacing()
+        room = self.toolbar.width() - used
+        for i in range(self.recent_box.count()):
+            b = self.recent_box.itemAt(i).widget()
+            if b is None:
+                continue
+            need = b.sizeHint().width() + self.recent_box.spacing()
+            fits = need <= room
+            if b.isHidden() == fits:
+                b.setVisible(fits)
+            room = room - need if fits else -1                  # once one does not fit, none of the later ones is shown
 
     # ================================================================ menus
     def _fill_undo_menu(self) -> None:
@@ -934,7 +995,6 @@ class MainWindow(QMainWindow):
         first = items[0] if items else None
         sr, ch = (first.sr, first.channels) if first else (44100, 2)
         summary = formats.describe(s, sr, ch)
-        total = sum(i.length for i in items)
         need = sum(formats.estimate_size(s, i.length, i.sr, i.channels) for i in items)
         folder = self._out_dir() or (first.path.parent if first and first.path else Path.home())
         try:
@@ -1012,6 +1072,7 @@ class MainWindow(QMainWindow):
         self.convert_bar.set_running(False)
         self._convert_job = None
         if error is not None:
+            self.convert_bar.reset_progress()
             self.convert_bar.set_status(tr(f"Failed: {error}"), "bad")
             for it in self.state.items:
                 if it.status in ("queued", "converting"):
@@ -1038,18 +1099,34 @@ class MainWindow(QMainWindow):
             self.convert_bar.set_status(tr(f"Cancelled. {len(done)} file{'s' if len(done) != 1 else ''} had already been converted."), "warn")
             return
         skipped = [r for r in results if r.status == "skipped"]
-        self.convert_bar.set_progress(1.0, tr("Completed 100 %"))
+        warned = [r for r in done if r.warning]
+        if failed and not done:
+            self.convert_bar.reset_progress()          # nothing was written: a full bar would read as success
+        elif failed or warned:
+            self.convert_bar.set_progress(1.0, tr("Finished, with problems"))
+        else:
+            self.convert_bar.set_progress(1.0, tr("Completed 100 %"))
         msg = tr(f"Converted {len({r.output for r in done})} file{'s' if len({r.output for r in done}) != 1 else ''}")
         if skipped:
             msg += tr(f", skipped {len(skipped)}")
         if failed:
             msg += tr(f", {len(failed)} failed: {failed[0].message}")
-        self.convert_bar.set_status(msg, "bad" if failed else "good")
+        if warned:
+            msg += tr(f", tags not written in {len(warned)}: {warned[0].warning}")
+        self.convert_bar.set_status(msg, "bad" if failed else ("warn" if warned else "good"))
+        self._explain_blocked_write(tr("Convert"), [r.problem for r in failed])
         if done:
             out = done[-1].output
             self._flash(tr(f"Saved to {out.parent}"))
             if not failed and QApplication.activeWindow() is self:
                 QTimer.singleShot(150, lambda: self._offer_open_folder(out.parent))
+
+    def _explain_blocked_write(self, title: str, problems: list) -> None:
+        """When Windows Security is what stopped the save, the one line in the status bar is not enough: say which
+        programs to allow and offer to open the page. Asked once, however many files were refused."""
+        blocked = next((p for p in problems if p is not None and p.kind in access.BLOCKED_KINDS), None)
+        if blocked is not None:
+            QTimer.singleShot(0, lambda: show_write_problem(self, title, blocked))
 
     def _offer_open_folder(self, folder: Path) -> None:
         box = QMessageBox(self)
@@ -1164,11 +1241,15 @@ class MainWindow(QMainWindow):
         self.book_bar.set_running(False)
         self._book_job = None
         if error is not None:
+            problem = None
             if isinstance(error, ffmpeg.OutputError):                  # say why the file could not be written
-                reason = access.one_line(access.diagnose(error.path, error.detail), error.path.name)
+                problem = access.diagnose_output_error(error)
+                reason = access.one_line(problem, error.path.name)
             else:
                 reason = str(error).strip().splitlines()[0] if str(error).strip() else str(error)
+            self.book_bar.reset_progress()
             self.book_bar.set_status(tr(f"Failed: {reason}"), "bad")
+            self._explain_blocked_write(tr("Create audiobook"), [problem])
             return
         if cancelled or result is None:
             self.book_bar.set_status(tr("Cancelled"), "warn")

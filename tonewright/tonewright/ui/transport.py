@@ -101,6 +101,8 @@ class TransportBar(QFrame):
             sel.addWidget(role_label(text, "section"), 0, col, alignment=Qt.AlignmentFlag.AlignRight)
         sel.addWidget(role_label(tr("Selection"), "dim"), 1, 0)
         self.sel_start, self.sel_end, self.sel_len = (TimeEdit() for _ in range(3))
+        for box, name in ((self.sel_start, "Selection start"), (self.sel_end, "Selection end"), (self.sel_len, "Selection length")):
+            box.setAccessibleName(tr(name))
         for i, w in enumerate((self.sel_start, self.sel_end, self.sel_len), start=1):
             w.setFixedWidth(112)
             sel.addWidget(w, 1, i)

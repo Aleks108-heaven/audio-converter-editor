@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QButtonGroup, QComboBox, QGridLayout, QHBoxLayout
 from ..core import formats
 from ..core.formats import EncodeSettings, FormatSpec
 from .widgets import Chip, role_label, shrinkable
+from .accessibility import label_for
 from ..i18n import tr, width_scale
 
 CHIP_LABELS = {"mp3": "MP3", "m4a": "M4A", "m4b": "M4B", "aac": "AAC", "ogg": "OGG", "opus": "Opus",
@@ -28,6 +29,7 @@ def _row(label: str, widget: QWidget, field_width: int = 110) -> QWidget:
     lab.setProperty("role", "dim")
     lay.addWidget(lab)
     lay.addWidget(widget, 1)
+    label_for(lab, widget)                  # a screen reader says what the field is for
     return w
 
 

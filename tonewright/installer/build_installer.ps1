@@ -14,7 +14,8 @@
 [CmdletBinding()]
 param(
     [string]$FfmpegDir = "",              # folder with ffmpeg.exe and ffprobe.exe; found automatically if empty
-    [switch]$AllowUnpinnedPython          # accept a Python runtime whose SHA-256 is not listed below
+    [switch]$AllowUnpinnedPython,         # accept a Python runtime whose SHA-256 is not listed below
+    [switch]$AllowUnpinnedFfmpeg          # accept an FFmpeg whose SHA-256 is not listed below
 )
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -31,9 +32,18 @@ $dist = Join-Path $here "dist"
 # (its python315.dll was also confirmed identical to the one in the installed 3.15.0).
 $PinnedPython = @{ "3.15.0" = "A6999BCBCBE56F937159EF79C2630260ECA99F65F7860BC5CD20430324079A44" }
 
+# SHA-256 of the FFmpeg that ships: gyan.dev 9.0.2 "full_build" (winget package Gyan.FFmpeg). gyan.dev publishes a hash for
+# the archive, not for the programs inside it, so these were taken from the copy the 1.0 and 1.1 installers were built
+# from; the package on the build PC, the staged copy and the installed copy all matched. To move to a newer FFmpeg,
+# install it, check the build's own hash, and change both values together.
+$PinnedFfmpeg = @{
+    "ffmpeg.exe"  = "589E50B766D251AFDF181DD664D40BD94407E200B019989FD7468C7D118A28D0"
+    "ffprobe.exe" = "02264DFA4F56BAAA31E443ECE8AA16D397F6B008200E7FD184D22B9009E75FD3"
+}
+
 function Step($text) { Write-Host "`n==> $text" -ForegroundColor Cyan }
 function Fail($text) { Write-Host "ERROR: $text" -ForegroundColor Red; exit 1 }
-function Run-Robocopy([string[]]$Arguments) {
+function Invoke-Robocopy([string[]]$Arguments) {
     & robocopy @Arguments | Out-Null
     if ($LASTEXITCODE -ge 8) { Fail "robocopy failed ($LASTEXITCODE): $($Arguments -join ' ')" }
     $global:LASTEXITCODE = 0
@@ -51,7 +61,8 @@ Write-Host "Tonewright $version, Python $pyVersion"
 $lock = Get-Content (Join-Path $root "requirements.lock.txt") | Where-Object { $_ -match '^[A-Za-z]' }
 $installed = & $venvPy -m pip freeze --disable-pip-version-check
 foreach ($line in $lock) {
-    $name, $want = $line -split '=='
+    if ($line -notmatch '^([A-Za-z0-9_.\-]+)==([^\s\\]+)') { Fail "Cannot read this line of requirements.lock.txt: $line" }
+    $name, $want = $Matches[1], $Matches[2]
     $have = $installed | Where-Object { ($_ -replace '_', '-') -like "$name==*" }
     if (-not $have -or ($have -split '==')[1] -ne $want) { Fail "The environment does not match requirements.lock.txt for $name (wanted $want, found '$have')." }
 }
@@ -90,7 +101,7 @@ Set-Content $pth.FullName -Value @($zipStd, ".", "..\site-packages", "..\app") -
 
 Write-Host "Libraries"
 $sp = Join-Path $root ".venv\Lib\site-packages"
-Run-Robocopy @($sp, (Join-Path $stage "site-packages"), "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
+Invoke-Robocopy @($sp, (Join-Path $stage "site-packages"), "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP",
     "/XD", "pip", "pip-*", "_pytest", "pytest", "pytest-*", "pluggy", "pluggy-*", "iniconfig", "iniconfig-*", "pygments", "pygments-*",
     "colorama", "colorama-*", "packaging", "packaging-*", "__pycache__", "tests", "test", "_virtualenv*",
     "/XF", "*.pyi", "py.py", "*.pth")
@@ -117,7 +128,7 @@ Get-ChildItem $plugins -Directory | ForEach-Object {
 
 Write-Host "Program"
 $app = Join-Path $stage "app"
-Run-Robocopy @((Join-Path $root "tonewright"), (Join-Path $app "tonewright"), "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP", "/XD", "__pycache__", "/XF", "*.pyc")
+Invoke-Robocopy @((Join-Path $root "tonewright"), (Join-Path $app "tonewright"), "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP", "/XD", "__pycache__", "/XF", "*.pyc")
 Remove-Item (Join-Path $app "tonewright\assets\__pycache__") -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "FFmpeg"
@@ -132,6 +143,12 @@ if (-not $FfmpegDir) {
     $FfmpegDir = $pick.DirectoryName
 }
 foreach ($exe in "ffmpeg.exe", "ffprobe.exe") { if (-not (Test-Path (Join-Path $FfmpegDir $exe))) { Fail "$exe is missing from $FfmpegDir" } }
+foreach ($exe in "ffmpeg.exe", "ffprobe.exe") {
+    $got = (Get-FileHash (Join-Path $FfmpegDir $exe) -Algorithm SHA256).Hash
+    if ($got -eq $PinnedFfmpeg[$exe]) { Write-Host "$exe matches the pinned SHA-256" }
+    elseif ($AllowUnpinnedFfmpeg) { Write-Warning "$exe is not the pinned build. Its SHA-256 is $got; update `$PinnedFfmpeg in build_installer.ps1." }
+    else { Fail "$exe in $FfmpegDir does not match the pinned SHA-256 (got $got). Install the pinned FFmpeg, or check this build and update `$PinnedFfmpeg, or pass -AllowUnpinnedFfmpeg." }
+}
 $bin = Join-Path $app "bin"
 New-Item -ItemType Directory -Force $bin | Out-Null
 Copy-Item (Join-Path $FfmpegDir "ffmpeg.exe"), (Join-Path $FfmpegDir "ffprobe.exe") $bin

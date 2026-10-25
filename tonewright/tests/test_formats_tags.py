@@ -186,3 +186,50 @@ def test_name_from_pattern():
     assert tags.name_from_pattern("{track} - {artist} - {title}", empty, "orig") == "Song"
     assert tags.name_from_pattern("{artist} - {title}", TagSet(), "orig") == "orig"
     assert tags.name_from_pattern("{title}: {album}?", t, "orig") == "Song_ LP_"
+
+
+# ------------------------------------------------------------------ a file that cannot be changed
+def test_a_file_the_system_refuses_raises_the_system_error_not_mutagens_wrapper(tmp_path):
+    """mutagen reports "could not open it" as its own MutagenError; callers need the OSError to say why (see core/access)."""
+    import os
+    import stat
+    path = make_audio_file(tmp_path / "ro.flac", np.stack([sine(220, 0.5)] * 2, axis=1))
+    before = path.read_bytes()
+    os.chmod(path, stat.S_IREAD)
+    try:
+        with pytest.raises(OSError) as caught:
+            tags.write_tags(path, {"title": "nope"})
+        assert tags.os_error_of(caught.value) is caught.value
+    finally:
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+    assert path.read_bytes() == before                                     # a refused write changes nothing
+
+
+def test_a_file_that_is_not_audio_stays_a_mutagen_error(tmp_path):
+    import mutagen
+    path = tmp_path / "fake.mp3"
+    path.write_bytes(b"this is not audio at all" * 40)
+    try:
+        tags.write_tags(path, {"title": "x"})
+    except mutagen.MutagenError as exc:
+        assert tags.os_error_of(exc) is None
+    except OSError:
+        pytest.fail("a damaged file is not an operating-system refusal")
+
+
+@pytest.mark.parametrize("ext", ["mp3", "m4a", "flac", "ogg", "opus"])
+def test_writing_tags_never_changes_the_audio(tmp_path, ext):
+    """Decode before and after: the sound must be bit-identical however the tags grow, shrink or go."""
+    import hashlib
+    import subprocess
+    path = make_audio_file(tmp_path / f"a.{ext}", np.stack([sine(330, 1.5, amp=0.4)] * 2, axis=1))
+
+    def decoded() -> str:
+        out = subprocess.run([ffmpeg.find_tool("ffmpeg"), "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "s16le", "-"],
+                             capture_output=True, check=True)
+        return hashlib.sha256(out.stdout).hexdigest()
+    before = decoded()
+    tags.write_tags(path, {"title": "Song", "artist": "Band", "comment": "x" * 3000}, cover=PNG_1X1)
+    assert decoded() == before
+    tags.write_tags(path, {"title": "A much longer title " * 20, "artist": ""}, cover=None)
+    assert decoded() == before and tags.read_tags(path).artist == ""

@@ -8,7 +8,7 @@ audiobook maker), in one window, with its own look and its own way of working.
 
 ## Install it
 
-Run **`Tonewright-Setup-1.1.0.exe`** from the
+Run **`Tonewright-Setup-1.2.0.exe`** from the
 [latest release](https://github.com/Aleks108-heaven/audio-converter-editor/releases/latest) (or build it yourself with
 `installer\build_installer.ps1`, see below). It installs into
 `C:\Program Files\Tonewright` (Windows asks for administrator approval once), so only an administrator can change the
@@ -18,9 +18,18 @@ earlier per-user copy, remove it in Settings > Apps after this one is in. Python
 inside it, so nothing else has to be installed; the wizard is available in English and Ukrainian. Installing a newer
 version over an older one just upgrades it and keeps your settings.
 
+**Windows may warn about an "unknown publisher".** The installer is not code-signed: signing needs a certificate from a
+certification authority, and this project does not have one. When SmartScreen says *Windows protected your PC*, check the
+download first, then choose *More info > Run anyway*. The checksum is in the `.sha256` file next to the installer on
+the release page:
+
+```powershell
+Get-FileHash .\Tonewright-Setup-1.2.0.exe -Algorithm SHA256     # must equal the value in Tonewright-Setup-1.2.0.exe.sha256
+```
+
 ### On a Mac (M1 and newer)
 
-Download **`Tonewright-1.1.0-arm64.dmg`** and `SHA256SUMS.txt` from the
+Download **`Tonewright-1.2.0-arm64.dmg`** and `SHA256SUMS.txt` from the
 [latest release](https://github.com/Aleks108-heaven/audio-converter-editor/releases/latest) (check the file against the
 sums with `shasum -a 256`). Open the `.dmg` and drag **Tonewright** onto **Applications**. FFmpeg is inside the app.
 GitHub builds the same file on a real Apple Silicon Mac for every change (the **Actions** tab, latest **macOS** run,
@@ -218,7 +227,9 @@ Adding another language means one new file in `tonewright/locales/` (see `tonewr
   programs and has an **Open Windows Security** button. There choose *Allow an app through Controlled folder access >
   Add an allowed app > Browse all apps* and add `C:\Program Files\Tonewright\python\pythonw.exe` and
   `C:\Program Files\Tonewright\app\bin\ffmpeg.exe`. You only do it once. (Saving to a folder that is not protected
-  works without it.)
+  works without it.) The same protection can refuse to change a file's *tags* (the Tags page, converting with tags,
+  making an audiobook); Tonewright then names the cause instead of showing a number such as "[Errno 9] Bad file
+  descriptor", and the steps are the same.
 * **The taskbar shows a Python logo.** Right-click that button, choose *Unpin from taskbar*, start Tonewright from the
   Start menu and pin it again. An older version let Windows pin the Python program itself; the installer now gives its
   shortcuts Tonewright's own identity, so a pin made from the Start-menu shortcut or from the running window gets
@@ -255,9 +266,15 @@ Build the installer (needs the `.venv`, FFmpeg and Inno Setup 6, see the header 
 powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
 ```
 
-It stages a private Python (checked against a pinned SHA-256), the libraries pinned in `requirements.lock.txt`, the
-program and FFmpeg; smoke-tests that staged copy with its own Python (no window is shown); and only then compiles
-`installer\dist\Tonewright-Setup-<version>.exe` plus a `.sha256` file.
+It stages a private Python and the FFmpeg programs (both checked against pinned SHA-256 values in the script), the
+libraries pinned in `requirements.lock.txt`, and the program; smoke-tests that staged copy with its own Python (no
+window is shown); and only then compiles `installer\dist\Tonewright-Setup-<version>.exe` plus a `.sha256` file. The
+script stops if the FFmpeg on the build PC is not the pinned build; to move to a newer FFmpeg, install it, check it, and
+change both hashes in the script together.
+
+`requirements.lock.txt` pins every file of each library by SHA-256 (the values PyPI publishes). To install exactly
+that: `pip install --require-hashes --no-deps -r requirements.lock.txt`. The Mac build in GitHub Actions does so too,
+and its actions are pinned to commits.
 
 The GUI tests never show a window and script every dialog, so they are safe to run while you work.
 `python -m tonewright --selftest out.png` starts the real app, saves a screenshot and exits.

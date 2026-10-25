@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QF
                                QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QScrollArea, QSizePolicy,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from ..core import access
 from ..core import tags as tagmod
 from ..core.tags import TagSet
 from . import icons, theme
@@ -18,6 +19,7 @@ from .state import AppState, LibraryItem
 from .safe_image import read_image, read_pixmap
 from .tasks import run_task
 from .widgets import divider, make_button, role_label, section_label
+from .write_problem import show_write_problem
 from ..i18n import tr
 
 
@@ -278,6 +280,11 @@ class TagsPage(QWidget):
         self.comment.setFixedHeight(84)
         form.addWidget(self.comment, r, 1, 1, 5)
         form.setColumnStretch(5, 1)
+        for key, name in (("title", "Title"), ("artist", "Artist"), ("album", "Album"), ("album_artist", "Album artist"),
+                          ("year", "Year"), ("genre", "Genre"), ("track", "Track number"), ("track_total", "Total tracks"),
+                          ("disc", "Disc number"), ("disc_total", "Total discs"), ("composer", "Composer")):
+            self.edits[key].setAccessibleName(tr(name))             # the labels sit beside the fields, not tied to them
+        self.comment.setAccessibleName(tr("Comment"))
         row.addLayout(form, 1)
         root.addLayout(row)
 
@@ -325,7 +332,8 @@ class TagsPage(QWidget):
     def _small(placeholder: str, width: int) -> QLineEdit:
         e = QLineEdit()
         e.setPlaceholderText(tr(placeholder))
-        e.setFixedWidth(width)
+        # never narrower than its own hint plus the field's padding: a translation or a larger system font would cut it off
+        e.setFixedWidth(max(width, e.fontMetrics().horizontalAdvance(e.placeholderText()) + 36))
         return e
 
     # ------------------------------------------------------------ model <-> form
@@ -469,29 +477,41 @@ class TagsPage(QWidget):
         if not targets:
             self.status.setText(tr("Nothing to save. Changed tags are kept in the app and used when converting."))
             return
-        errors: list[str] = []
+        written: set[int] = set()                         # which of `targets` really were written
+        errors: dict[int, str] = {}                       # which were not, and why
+        problems: list[access.WriteProblem] = []
 
         def job(progress, cancel):
             for n, item in enumerate(targets):
                 cancel.check()
                 try:
                     tagmod.write_tags(item.path, item.tags, cover=item.tags.cover)
+                    written.add(n)
+                except OSError as exc:                    # say why: Windows Security refuses with just "Bad file descriptor"
+                    problem = access.diagnose_modify(item.path, exc)
+                    problems.append(problem)
+                    errors[n] = access.one_line(problem, item.name)
                 except Exception as exc:  # noqa: BLE001 - listed for the user
-                    errors.append(f"{item.name}: {exc}")
+                    errors[n] = f"{item.name}: {exc}"
                 progress((n + 1) / len(targets))
 
-        ok, _ = run_task(self.window(), tr("Saving tags"), job, message=tr(f"Writing tags to {len(targets)} file(s)…"), delay_ms=400)
-        saved = 0
-        for item in targets:
-            if not any(item.name in e for e in errors):
-                item.tags_orig = item.tags.copy()
-                saved += 1
-                self.state.touched(item)
+        run_task(self.window(), tr("Saving tags"), job, message=tr(f"Writing tags to {len(targets)} file(s)…"), delay_ms=400)
+        for n in sorted(written):
+            targets[n].tags_orig = targets[n].tags.copy()
+            self.state.touched(targets[n])
+        saved = len(written)
+        blocked = next((p for p in problems if p.kind in access.BLOCKED_KINDS), None)
+        if blocked is not None:                           # one sentence, not the same one per file
+            why = access.one_line(blocked)
+        else:
+            why = "; ".join(text for _, text in sorted(errors.items())[:3])
         self.status.setText(tr(f"Saved tags to {saved} file{'s' if saved != 1 else ''}.")
-                            + (tr(f"  {len(errors)} failed: ") + "; ".join(errors[:3]) if errors else ""))
+                            + (tr(f"  {len(errors)} failed: ") + why if errors else ""))
         self.status.setProperty("role", "bad" if errors else "good")
         self.status.style().unpolish(self.status)
         self.status.style().polish(self.status)
+        if blocked is not None:
+            show_write_problem(self.window(), tr("Save tags"), blocked)
 
     def _rename(self) -> None:
         dlg = RenameDialog(self.items, self.window())

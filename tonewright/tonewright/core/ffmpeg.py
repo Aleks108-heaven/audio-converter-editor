@@ -43,9 +43,10 @@ class OutputError(FFmpegError):
     """The output file could not be written: FFmpeg could not open it, or it could not be moved into place. FFmpeg says
     "No such file or directory" for every one of the causes, so `core.access.diagnose` finds the real one."""
 
-    def __init__(self, message: str, detail: str, path: str | os.PathLike) -> None:
+    def __init__(self, message: str, detail: str, path: str | os.PathLike, cause: BaseException | None = None) -> None:
         super().__init__(message, detail)
         self.path = Path(path)
+        self.cause = cause              # the operating system's own error, when there was one (not FFmpeg's text)
 
 
 _OS_REFUSAL = (r"no such file or directory|permission denied|access is denied|operation not permitted|"
@@ -69,7 +70,7 @@ def move_into_place(tmp: Path, out_path: Path) -> None:
     try:
         os.replace(tmp, out_path)
     except OSError as exc:
-        raise OutputError(f"Could not save {out_path.name}", exc.strerror or str(exc), out_path) from exc
+        raise OutputError(f"Could not save {out_path.name}", exc.strerror or str(exc), out_path, cause=exc) from exc
 
 
 # ---------------------------------------------------------------- locating

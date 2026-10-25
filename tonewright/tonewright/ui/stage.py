@@ -876,7 +876,6 @@ class Stage(QWidget):
             return
         pos = ev.position()
         region = self._region(pos)
-        lr = self.lane_rect()
         if ev.button() == Qt.MouseButton.MiddleButton:
             self._drag = {"kind": "pan", "x": pos.x(), "start": self.state.start}
             self.setCursor(Qt.CursorShape.ClosedHandCursor)

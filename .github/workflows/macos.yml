@@ -27,19 +27,20 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
       - name: FFmpeg for the tests (the same pinned build that ships in the app)
         run: |
           bash macos/fetch_ffmpeg.sh "$RUNNER_TEMP/ffmpeg"
           echo "TONEWRIGHT_FFMPEG_DIR=$RUNNER_TEMP/ffmpeg" >> "$GITHUB_ENV"
-      - name: Libraries (the exact versions in requirements.lock.txt)
+      - name: Libraries (the exact versions in requirements.lock.txt, each file checked against its SHA-256)
         run: |
           python -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install -r requirements.lock.txt pytest
+          .venv/bin/python -m pip install "pip==26.2.1"
+          .venv/bin/python -m pip install --require-hashes --no-deps -r requirements.lock.txt
+          .venv/bin/python -m pip install pytest
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
@@ -50,22 +51,23 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
-      - name: Libraries
+      - name: Libraries (the lock file's exact versions, each file checked against its SHA-256)
         run: |
           python -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install -r requirements.lock.txt "pyinstaller>=6.10,<7"
+          .venv/bin/python -m pip install "pip==26.2.1"
+          .venv/bin/python -m pip install --require-hashes --no-deps -r requirements.lock.txt
+          .venv/bin/python -m pip install "pyinstaller>=6.10,<7"
       - name: Build, sign (ad hoc) and test the app
         run: |
           source .venv/bin/activate
           bash macos/build_app.sh
       - name: Checksum
         run: shasum -a 256 macos/dist/*.dmg | tee macos/dist/SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tonewright-macos-arm64
           path: |

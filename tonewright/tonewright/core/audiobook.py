@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 import numpy as np
+from mutagen import MutagenError
 
 from . import analysis
 from . import ffmpeg as ff
@@ -248,12 +249,15 @@ def create_audiobook(parts: list[Part], opts: BookOptions, out_path: Path, *,
                 pauses = pauses_from_envelopes([e.result() for e in envelopes], envelopes[0].hop_s,
                                                durations, opts)
             chapters = plan_chapters(durations, parts, opts, pauses)
-        write_ffmetadata(meta, opts, chapters, total)
+        try:
+            write_ffmetadata(meta, opts, chapters, total)
+        except OSError as exc:                                   # Windows Security can refuse this program, not just FFmpeg
+            raise ff.OutputError(f"Could not write {meta.name}", exc.strerror or str(exc), out_path, cause=exc) from exc
         ff.run_capture(["-y", "-v", "error", "-i", str(work), "-i", str(meta), "-map", "0:a",
                         "-map_metadata", "1", "-map_chapters", "1", "-c", "copy",
                         "-movflags", "+faststart", "-f", "ipod", str(final_tmp)], cancel=cancel)
+        _finish_tags(final_tmp, opts, out_path)                  # tag the temporary file, so a failure leaves nothing behind
         ff.move_into_place(final_tmp, out_path)
-        _finish_tags(out_path, opts)
     finally:
         for tmp in (work, meta, final_tmp):
             try:
@@ -265,12 +269,20 @@ def create_audiobook(parts: list[Part], opts: BookOptions, out_path: Path, *,
     return out_path, chapters
 
 
-def _finish_tags(path: Path, opts: BookOptions) -> None:
-    """Add the cover and mark the file as an audiobook for players that care (iTunes, Books)."""
-    tagmod.write_tags(path, {"title": opts.title, "album": opts.title, "artist": opts.author,
-                             "album_artist": opts.author, "composer": opts.narrator, "year": opts.year,
-                             "genre": opts.genre, "comment": opts.comment}, cover=opts.cover)
-    from mutagen.mp4 import MP4
-    f = MP4(path)
-    f["stik"] = [2]
-    f.save()
+def _finish_tags(path: Path, opts: BookOptions, final_path: Optional[Path] = None) -> None:
+    """Add the cover and mark the file as an audiobook for players that care (iTunes, Books). `final_path` is where the
+    file is going, for an error message that names the file the user asked for."""
+    try:
+        tagmod.write_tags(path, {"title": opts.title, "album": opts.title, "artist": opts.author,
+                                 "album_artist": opts.author, "composer": opts.narrator, "year": opts.year,
+                                 "genre": opts.genre, "comment": opts.comment}, cover=opts.cover)
+        from mutagen.mp4 import MP4
+        f = MP4(path)
+        f["stik"] = [2]
+        f.save()
+    except (OSError, MutagenError) as exc:                       # say why (Windows Security) rather than "[Errno 9]"
+        refused = tagmod.os_error_of(exc)
+        if refused is None:
+            raise
+        raise ff.OutputError(f"Could not write the tags of {(final_path or path).name}", refused.strerror or str(refused),
+                             final_path or path, cause=refused) from exc

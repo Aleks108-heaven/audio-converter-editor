@@ -93,7 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationVersion(__version__)
     _install_crash_handling()
     log.info("Tonewright %s starting", __version__)
-    from .ui import icons, theme
+    from .ui import accessibility, icons, theme
+    accessibility.install(app)                 # icon-only buttons take their tooltip as their name, for screen readers
     app.setWindowIcon(icons.app_icon())
     settings = Settings()
     log.info("Language: %s", i18n.set_language(settings.get("language")))

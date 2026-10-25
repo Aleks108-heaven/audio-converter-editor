@@ -213,3 +213,48 @@ def test_ffmetadata_format(tmp_path):
     text = path.read_text(encoding="utf-8")
     assert text.startswith(";FFMETADATA1") and "START=2500" in text and "END=6000" in text
     assert text.count("[CHAPTER]") == 2 and "artist=A" in text
+
+
+def test_a_refused_tag_write_names_the_cause_and_leaves_nothing_behind(tmp_path, monkeypatch):
+    """Windows Security can let FFmpeg write the book and still stop this program from tagging it."""
+    import errno
+
+    def refuse(*a, **k):
+        raise OSError(errno.EBADF, "Bad file descriptor")
+    monkeypatch.setattr(tags, "write_tags", refuse)
+    with pytest.raises(ffmpeg.OutputError) as caught:
+        build(tmp_path, [1.0], BookOptions(title="B", split="files"))
+    assert isinstance(caught.value.cause, OSError) and caught.value.path == tmp_path / "book.m4b"
+    assert "Bad file descriptor" in caught.value.detail
+    assert not (tmp_path / "book.m4b").exists()              # tagged before it is moved into place: no untagged book is left
+    assert not list(tmp_path.glob("*tonewright*"))
+
+
+def test_a_tag_file_mutagen_could_not_open_is_unwrapped_to_the_system_error(tmp_path, monkeypatch):
+    """mutagen wraps "could not open it" in its own MutagenError; the system's error inside is what says why."""
+    import errno
+    from mutagen import MutagenError
+
+    class Refusing:
+        def __init__(self, *a, **k):
+            try:
+                raise PermissionError(errno.EACCES, "Permission denied")
+            except OSError as exc:
+                raise MutagenError(exc) from exc
+    monkeypatch.setattr("mutagen.mp4.MP4", Refusing)
+    with pytest.raises(ffmpeg.OutputError) as caught:
+        build(tmp_path, [1.0], BookOptions(title="B", split="files"))
+    assert isinstance(caught.value.cause, PermissionError) and not (tmp_path / "book.m4b").exists()
+
+
+def test_a_refused_chapter_file_is_an_output_error_too(tmp_path, monkeypatch):
+    import errno
+    from tonewright.core import audiobook
+
+    def refuse(*a, **k):
+        raise PermissionError(errno.EACCES, "Access is denied")
+    monkeypatch.setattr(audiobook, "write_ffmetadata", refuse)
+    with pytest.raises(ffmpeg.OutputError) as caught:
+        build(tmp_path, [1.0], BookOptions(title="B", split="files"))
+    assert caught.value.path == tmp_path / "book.m4b" and isinstance(caught.value.cause, PermissionError)
+    assert not list(tmp_path.glob("*tonewright*"))

@@ -1,7 +1,7 @@
 """Tonewright - a personal audio converter and editor."""
 import os as _os
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 APP_NAME = "Tonewright"
 
 # By default Windows looks in the *current folder* before PATH when a program is started by bare name. Switch that

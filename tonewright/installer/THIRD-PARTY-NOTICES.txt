@@ -20,8 +20,10 @@ cffi, pycparser                                  MIT / BSD-3-Clause     https://
 FFmpeg (ffmpeg.exe, ffprobe.exe), "full" Windows build by gyan.dev
                                                  GPL-3.0-or-later       https://ffmpeg.org/  https://www.gyan.dev/ffmpeg/builds/
     licenses\FFmpeg-LICENSE.txt, licenses\FFmpeg-build-README.txt
-    FFmpeg is run as a separate program. Its source code and the build configuration are available from the sites
-    above. If you pass this installer on to other people, the GPL terms of FFmpeg and mutagen apply to what you
-    pass on.
+    FFmpeg is run as a separate program. This is FFmpeg 9.0.2, the gyan.dev "full_build" (it includes x264 and x265,
+    which is why it is licensed GPL version 3). The exact build configuration is in licenses\FFmpeg-build-README.txt.
+    The corresponding source code is the FFmpeg 9.0.2 release from https://ffmpeg.org/download.html; the gyan.dev build
+    scripts and notes are at https://www.gyan.dev/ffmpeg/builds/. If you pass this installer on to other people, the
+    GPL terms of FFmpeg and mutagen apply to what you pass on, and you must offer them that source too.
 
 Fonts: the interface uses the fonts already installed with Windows (Segoe UI, Cascadia Mono); none are bundled.

@@ -5,9 +5,13 @@ On Windows 10 and 11 the usual real reason is Windows Security's *Controlled fol
 it lets only approved programs change files in Documents, Music, Videos, Pictures and Desktop, and it blocks the rest
 without a word. Each program is judged on its own, so FFmpeg can be blocked while Tonewright itself is allowed. The
 fix is a setting only the user can change, so the job here is to recognise the situation and say exactly what to do.
+
+Changing a file that already exists (writing its tags) is refused the same way, but the program says "[Errno 9] Bad file
+descriptor" or "Permission denied" instead of naming the cause, so `diagnose_modify` reads those the same way.
 """
 from __future__ import annotations
 
+import errno
 import os
 import subprocess
 import sys
@@ -35,6 +39,8 @@ class WriteProblem:
 
 
 KINDS = ("folder-missing", "windows-security", "ffmpeg-blocked", "not-writable", "unknown")
+BLOCKED_KINDS = ("windows-security", "ffmpeg-blocked")      # Windows Security is the cause, and there are steps to take
+_REFUSED_ERRNOS = (errno.EBADF, errno.EACCES, errno.EPERM)  # what a program is told when Windows Security stops it
 
 
 def controlled_folder_access() -> Optional[bool]:
@@ -98,6 +104,31 @@ def diagnose(out_path: str | os.PathLike, detail: str = "") -> WriteProblem:
     if ffmpeg.opening_output_failed(detail) and blocking is not False and paths.IS_WINDOWS:
         return WriteProblem("ffmpeg-blocked", folder, programs_to_allow(), detail)
     return WriteProblem("unknown", folder, reason=detail)
+
+
+def diagnose_modify(path: str | os.PathLike, exc: BaseException) -> WriteProblem:
+    """Work out why the existing file `path` could not be changed in place (its tags written). `exc` is what was raised.
+
+    Creating a new file and changing an old one are blocked together by Windows Security, but not always the same way:
+    the test file can be made while the real one still refuses, and then all there is to go on is the error number."""
+    target = Path(path)
+    detail = (getattr(exc, "strerror", None) or str(exc)).strip()
+    problem = diagnose(target, detail)
+    if problem.kind != "unknown":
+        return problem
+    if target.exists() and not os.access(target, os.W_OK):
+        return WriteProblem("not-writable", problem.folder, reason=detail)
+    if paths.IS_WINDOWS and isinstance(exc, OSError) and exc.errno in _REFUSED_ERRNOS \
+            and controlled_folder_access() is not False:
+        return WriteProblem("windows-security", problem.folder, programs_to_allow(), detail)
+    return problem
+
+
+def diagnose_output_error(exc: ffmpeg.OutputError) -> WriteProblem:
+    """The problem behind an `OutputError`: from the operating system's own error when it carried one."""
+    if exc.cause is not None:
+        return diagnose_modify(exc.path, exc.cause)
+    return diagnose(exc.path, exc.detail)
 
 
 def one_line(problem: WriteProblem, name: str = "") -> str:

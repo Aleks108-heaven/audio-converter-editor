@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit
 
 from ..core.common import Cancelled, CancelToken, PauseToken
 from . import icons
+from .accessibility import label_for
 from .widgets import make_button
 from ..i18n import tr
 
@@ -79,6 +80,7 @@ class JobBar(QFrame):
         self.browse.clicked.connect(self.browseClicked)
         top.addWidget(lab)
         top.addWidget(self.path, 1)
+        label_for(lab, self.path)                                  # "Output folder" / "Save as" is the field's name
         top.addWidget(self.browse)
         self.same_folder: Optional[QCheckBox] = None
         if same_folder_option:

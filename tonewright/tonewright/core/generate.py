@@ -83,7 +83,7 @@ def generate_noise(color: str, amp_db: float, seconds: float, sr: int, channels:
     """Coloured noise at a given RMS level (dBFS). Each channel is independent."""
     total = max(1, int(round(seconds * sr)))
     inputs = ";".join(f"anoisesrc=c={color}:r={sr}:a=1:d={seconds:.6f}:seed={7 + i}[n{i}]" for i in range(channels))
-    graph = inputs + (f";[n0]anull[out]" if channels == 1 else
+    graph = inputs + (";[n0]anull[out]" if channels == 1 else
                       f";{''.join(f'[n{i}]' for i in range(channels))}amerge=inputs={channels}[out]")
     raw = ff.render_graph(graph, sr, channels, label=f"{color} noise", cancel=cancel,
                           progress=lambda f: progress and progress(f * 0.7), expected_frames=total)

@@ -13,7 +13,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (QAbstractButton, QComboBox, QGroupBox, QLabel, QLineEdit, QListWidget, QMenu,
                                QTableWidget, QTabBar, QTreeWidget, QWidget)
 
-WORDS = re.compile(r"[A-Za-z]{3,}")
+WORDS = re.compile(r"[A-Za-z]{3,}|\be\.g\.")        # "e.g. 2026" has no three-letter word, and was once missed because of it
 TAGS = re.compile(r"<[^>]+>")
 # text that is data or a product name, not interface wording
 IGNORE_EXACT = {"Tonewright", "FFmpeg", "PySide6", "NumPy", "MP3", "M4A", "M4B", "AAC", "OGG", "Opus", "WMA", "FLAC", "WAV",

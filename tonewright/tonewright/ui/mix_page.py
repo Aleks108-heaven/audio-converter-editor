@@ -20,6 +20,8 @@ from ..core.document import Clip, Document, PieceSeq
 from ..core.mixer import CHANNELS, DEFAULT_SR, LiveMix, MixClip, MixProject, custom_filters_in
 from ..core.source import Source, SourceWriter
 from ..core.timefmt import format_time
+from .accessibility import label_for
+from .adaptive import AdaptiveBar
 from ..i18n import tr
 from . import icons, theme
 from .dialogs import RecordDialog
@@ -868,6 +870,7 @@ class MixInspector(QWidget):
         lab.setFixedWidth(96)
         h.addWidget(lab)
         h.addWidget(widget, 1)
+        label_for(lab, widget)
         return w
 
     def _build_clip_page(self) -> QWidget:
@@ -999,8 +1002,9 @@ class MixPage(QWidget):
         return b
 
     def _build_toolbar(self) -> QWidget:
-        bar = QWidget()
+        bar = AdaptiveBar()
         bar.setObjectName("mixtoolbar")
+        self.toolbar = bar
         bar.setStyleSheet(f"#mixtoolbar {{ background: {theme.current().bg0}; border-bottom: 1px solid {theme.current().line}; }}")
         h = QHBoxLayout(bar)
         h.setContentsMargins(14, 5, 14, 5)
@@ -1064,7 +1068,21 @@ class MixPage(QWidget):
         menu.addAction(tr("Save mix project…"), c.save_project)
         self.project_btn.setMenu(menu)
         h.addWidget(self.project_btn)
+        self._wide_buttons = [self.add_files_btn, self.cross_btn, self.env_btn]       # the ones that carry words
+        self._icons_only = False
+        self._toolbar_full_width = bar.layout().minimumSize().width()                 # what it needs with the words shown
+        bar.resized.connect(self._fit_toolbar)
         return bar
+
+    def _fit_toolbar(self) -> None:
+        """Show the words beside the icons while there is room for them, and the icons alone when there is not."""
+        icons_only = self.toolbar.width() < self._toolbar_full_width
+        if icons_only == self._icons_only:
+            return
+        self._icons_only = icons_only
+        style = Qt.ToolButtonStyle.ToolButtonIconOnly if icons_only else Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        for b in self._wide_buttons:
+            b.setToolButtonStyle(style)
 
     # ---- transport
     def _build_transport(self) -> QWidget:

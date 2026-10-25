@@ -16,6 +16,7 @@ from . import theme
 from .safe_image import read_image, read_pixmap
 from .tags_panel import image_bytes_from_qimage
 from .widgets import TimeEdit, divider, make_button, section_label, shrinkable
+from .accessibility import label_for
 from ..i18n import tr, width_scale
 
 
@@ -29,6 +30,7 @@ def _row(label: str, widget: QWidget, width: int = 104) -> QWidget:
     lab.setProperty("role", "dim")
     lay.addWidget(lab)
     lay.addWidget(widget, 1)
+    label_for(lab, widget)                  # a screen reader says what the field is for
     return w
 
 
@@ -59,7 +61,7 @@ class AudiobookPanel(QScrollArea):
         self.author = QLineEdit()
         self.narrator = QLineEdit()
         self.year = QLineEdit()
-        self.year.setPlaceholderText("e.g. 2026")
+        self.year.setPlaceholderText(tr("e.g. 2026"))
         self.genre = QComboBox()
         self.genre.setEditable(True)
         for g in (tr("Audiobook"), tr("Fiction"), tr("Non-Fiction"), tr("Biography"), tr("Meditation"), tr("Education"), tr("Spoken Word")):
@@ -161,7 +163,7 @@ class AudiobookPanel(QScrollArea):
         lay.addWidget(_row(tr("Bitrate"), shrinkable(self.bitrate)))
         lay.addWidget(self.mono)
         lay.addWidget(_row(tr("Sample rate"), shrinkable(self.rate)))
-        lay.addWidget(_row(tr("Pause between files"), self.gap, 104))
+        lay.addWidget(_row(tr("Pause between files"), self.gap, 120))
         lay.addStretch(1)
         self.setWidget(body)
 

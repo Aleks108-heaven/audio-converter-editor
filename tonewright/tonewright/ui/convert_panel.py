@@ -14,6 +14,7 @@ from ..core.formats import EncodeSettings
 from ..core.settings import Settings
 from .format_picker import FormatPicker
 from .widgets import divider, role_label, section_label, shrinkable
+from .accessibility import label_for
 from ..i18n import tr, width_scale
 
 PATTERNS = [("Original name", "{name}"), ("Artist - Title", "{artist} - {title}"),
@@ -31,6 +32,7 @@ def _row(label: str, widget: QWidget, width: int = 110) -> QWidget:
     lab.setProperty("role", "dim")
     lay.addWidget(lab)
     lay.addWidget(widget, 1)
+    label_for(lab, widget)                  # a screen reader says what the field is for
     return w
 
 

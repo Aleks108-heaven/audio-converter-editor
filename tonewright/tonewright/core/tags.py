@@ -351,11 +351,32 @@ def read_tags(path: Union[str, Path]) -> TagSet:
                   genre=raw.get("genre", ""), composer=raw.get("composer", ""), comment=raw.get("comment", ""))
 
 
+def os_error_of(exc: BaseException) -> Optional[OSError]:
+    """The operating system's own error behind `exc`: `exc` itself, or what mutagen wrapped when it could not open the file."""
+    if isinstance(exc, OSError):
+        return exc
+    if isinstance(exc, mutagen.MutagenError) and isinstance(exc.__cause__, OSError):
+        return exc.__cause__
+    return None
+
+
 def write_tags(path: Union[str, Path], values: Union[Mapping[str, str], TagSet], *,
                cover: Union[bytes, None, type(...)] = KEEP) -> None:
     """Write the given text fields (an empty string removes a field). `cover` may be image
-    bytes, None to remove the artwork, or KEEP (the default) to leave it alone."""
-    path = Path(path)
+    bytes, None to remove the artwork, or KEEP (the default) to leave it alone.
+
+    A file that could not be opened or written raises `OSError` (mutagen's own wrapper of it is unwrapped, so that
+    callers can tell "the system refused" from "this is not a file with tags"); anything else is a `MutagenError`."""
+    try:
+        _write_tags(Path(path), values, cover)
+    except mutagen.MutagenError as exc:
+        refused = os_error_of(exc)
+        if refused is not None:
+            raise refused from exc
+        raise
+
+
+def _write_tags(path: Path, values: Union[Mapping[str, str], TagSet], cover) -> None:
     if isinstance(values, TagSet):
         if cover is KEEP:
             cover = values.cover
