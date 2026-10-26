@@ -489,6 +489,14 @@ def analyze_stream(chunks: Iterable[np.ndarray], sr: int, channels: int, audio_f
     return text
 
 
+def _finite_samples(block: np.ndarray) -> np.ndarray:
+    """`block` itself, or (when ffmpeg handed back NaN or infinity, which a filter does now and then) a copy with those
+    samples made silent: they would otherwise spread through every effect after this one and into the saved file."""
+    if np.isfinite(block).all():
+        return block
+    return np.nan_to_num(block, nan=0.0, posinf=0.0, neginf=0.0)
+
+
 def filter_stream(chunks: Iterable[np.ndarray], sr: int, channels: int, audio_filter: str,
                   writer: SourceWriter, *, out_sr: Optional[int] = None,
                   out_channels: Optional[int] = None,
@@ -515,11 +523,11 @@ def filter_stream(chunks: Iterable[np.ndarray], sr: int, channels: int, audio_fi
             buf += data
             n = (len(buf) // frame_bytes) * frame_bytes
             if n >= (1 << 20):
-                writer.write(np.frombuffer(bytes(buf[:n]), dtype="<f4").reshape(-1, channels_out))
+                writer.write(_finite_samples(np.frombuffer(bytes(buf[:n]), dtype="<f4").reshape(-1, channels_out)))
                 del buf[:n]
         n = (len(buf) // frame_bytes) * frame_bytes
         if n:
-            writer.write(np.frombuffer(bytes(buf[:n]), dtype="<f4").reshape(-1, channels_out))
+            writer.write(_finite_samples(np.frombuffer(bytes(buf[:n]), dtype="<f4").reshape(-1, channels_out)))
         feeder.join()
         rc = proc.finish()
     except BaseException:

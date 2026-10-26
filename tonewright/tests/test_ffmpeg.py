@@ -87,6 +87,24 @@ def test_filter_stream_big_transfer_does_not_deadlock():
     assert float(out.read(1000, 2000).mean()) == pytest.approx(0.25, abs=1e-4)
 
 
+def test_samples_that_are_not_finite_are_made_silent_and_clean_blocks_are_left_alone():
+    clean = np.array([[0.5, -0.5], [1.0, 0.0]], np.float32)
+    assert ffmpeg._finite_samples(clean) is clean
+    dirty = np.array([[0.5, np.nan], [np.inf, -np.inf]], np.float32)
+    np.testing.assert_array_equal(ffmpeg._finite_samples(dirty), [[0.5, 0.0], [0.0, 0.0]])
+    assert np.isnan(dirty[0, 1])                                        # the caller's array was not changed
+
+
+def test_filter_stream_never_hands_on_nan_or_infinity():
+    data = np.full((5000, 2), 0.25, np.float32)
+    data[100, 0], data[200, 1], data[300, 0] = np.nan, np.inf, -np.inf
+    w = SourceWriter(SR, 2)
+    ffmpeg.filter_stream([data], SR, 2, "anull", w, total_frames=len(data))
+    out = w.finish().read(0, 5000)
+    assert np.isfinite(out).all() and out[0, 0] == pytest.approx(0.25) and out[4000, 1] == pytest.approx(0.25)
+    assert (out[100, 0], out[200, 1], out[300, 0]) == (0.0, 0.0, 0.0)
+
+
 def test_filter_stream_error_is_reported():
     w = SourceWriter(SR, 1)
     with pytest.raises(ffmpeg.FFmpegError):
