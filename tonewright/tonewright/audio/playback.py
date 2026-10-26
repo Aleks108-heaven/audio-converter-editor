@@ -197,6 +197,7 @@ class Player:
             if self._seq is None or self._state == "stopped":
                 return
             frame = max(0, min(frame, self._end - 1))
+            self._start = frame                                  # the new lower bound for `position`, or a jump back would be clamped
             self._begin_feed(frame)
 
     def swap(self, seq: Readable, *, frame: Optional[int] = None, end: Optional[int] = None,

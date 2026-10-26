@@ -8,7 +8,7 @@ audiobook maker), in one window, with its own look and its own way of working.
 
 ## Install it
 
-Run **`Tonewright-Setup-1.2.0.exe`** from the
+Run **`Tonewright-Setup-1.3.0.exe`** from the
 [latest release](https://github.com/Aleks108-heaven/audio-converter-editor/releases/latest) (or build it yourself with
 `installer\build_installer.ps1`, see below). It installs into
 `C:\Program Files\Tonewright` (Windows asks for administrator approval once), so only an administrator can change the
@@ -24,12 +24,12 @@ download first, then choose *More info > Run anyway*. The checksum is in the `.s
 the release page:
 
 ```powershell
-Get-FileHash .\Tonewright-Setup-1.2.0.exe -Algorithm SHA256     # must equal the value in Tonewright-Setup-1.2.0.exe.sha256
+Get-FileHash .\Tonewright-Setup-1.3.0.exe -Algorithm SHA256     # must equal the value in Tonewright-Setup-1.3.0.exe.sha256
 ```
 
 ### On a Mac (M1 and newer)
 
-Download **`Tonewright-1.2.0-arm64.dmg`** and `SHA256SUMS.txt` from the
+Download **`Tonewright-1.3.0-arm64.dmg`** and `SHA256SUMS.txt` from the
 [latest release](https://github.com/Aleks108-heaven/audio-converter-editor/releases/latest) (check the file against the
 sums with `shasum -a 256`). Open the `.dmg` and drag **Tonewright** onto **Applications**. FFmpeg is inside the app.
 GitHub builds the same file on a real Apple Silicon Mac for every change (the **Actions** tab, latest **macOS** run,
@@ -156,12 +156,17 @@ Use it for transitions between songs, voice over music, or layering sounds.
   (switch **Snap** off to place freely). **Trim** with the clip's left and right edges.
 * **Fade** with the small handles at the top corners. A fade is an equal-power curve, so a **Crossfade**
   between two overlapping clips keeps the loudness steady. Select a clip and press *Crossfade*.
-* **Volume curve** (the *Volume curve* button, or `E`) for transitions you shape by hand. Click a clip's line to
-  put a point there, then drag the point **up** to make that part louder or **down** to make it quieter (all the way
-  down is silence; the dashed line is the clip's normal level). Drag it sideways to move it in time, and right-click a
-  point to delete it, or reset the whole curve. Put a falling curve on one song and a rising one on the song that
-  overlaps it to blend them exactly the way you like. It works together with fades and the clip's gain, follows the
-  audio when you trim or split, and is saved in the mix project.
+* **Volume curve** (the *Volume curve* button, or `E`) for transitions you shape by hand. Double-click a clip's line
+  to put a point there (the sound does not change until you drag it), then drag the point **up** to make that part
+  louder (the top is twice as loud) or **down** to make it quieter (all the way down is silence; the dashed line is the
+  clip's normal level). Between points the line is straight, and before the first and after the last it stays level, so
+  to change only one stretch, put a point on the line before it and one after it. Drag a point sideways to move it in
+  time (never onto its neighbour), drag it out of the clip or right-click it to delete it, or reset the whole curve.
+  Put a falling curve on one song and a rising one on the song that overlaps it to blend them exactly the way you
+  like. It works together with fades and the clip's gain, follows the audio when you trim or split, and is saved in
+  the mix project. Songs on different lines play together and are added up; if the sum is louder than the format
+  allows it is flattened at the top (never wrapped), in the preview and in the built file alike, and building asks
+  first whether to lower the whole mix instead.
 * **Volume and pan:** each line has a volume slider and a balance slider (double-click resets), plus
   **Mute** and **Solo**. Drag the green line inside a clip to set that clip's own gain.
 * **Effects:** *Add effect* puts an effect span under the lines. It affects the whole mix between its

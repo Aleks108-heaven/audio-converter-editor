@@ -23,6 +23,7 @@ DEFAULTS: dict[str, Any] = {
     "follow_playhead": True,
     "snap_zero_crossings": False,
     "show_db_scale": True,
+    "mix_delete_outside": True,         # dragging a volume-curve point out of its clip deletes it
     "spectrogram_fft": 2048,
     "preview_seconds": 8,
     "window": {},

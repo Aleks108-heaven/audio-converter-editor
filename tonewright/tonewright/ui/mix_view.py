@@ -11,8 +11,8 @@ from PySide6.QtGui import QColor, QFontMetrics, QKeyEvent, QMouseEvent, QPainter
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QScrollBar,
                                QSizePolicy, QSlider, QToolTip, QVBoxLayout, QWidget)
 
-from ..core.mixer import (CLIP_GAIN_RANGE, ENVELOPE_MAX, MAX_ENVELOPE_POINTS, MIN_CLIP, VOLUME_RANGE, EffectSpan, Line,
-                          MixClip, MixProject, envelope_at)
+from ..core.mixer import (CLIP_GAIN_RANGE, ENVELOPE_MAX, MIN_CLIP, VOLUME_RANGE, EffectSpan, Line, MixClip, MixProject,
+                          add_point, envelope_at, move_point, remove_point)
 from ..core.timefmt import format_time
 from ..i18n import tr
 from . import icons, theme
@@ -31,6 +31,7 @@ ENV_TOP = 15                  # the volume curve spans the clip from this far be
 ENV_BOTTOM = 5                # ...to this far above its bottom edge (silence)
 ENV_POINT = 4.5               # radius of a curve point, px
 ENV_GRAB = 8                  # how close the pointer must be to a point (or the line) to take it, px
+DELETE_MARGIN = 10            # a dragged point is deleted once the pointer is this far outside its clip, px
 LINE_COLOURS = ("#4ea6ff", "#5fd38d", "#ffb23e", "#ff6b81", "#b48cff", "#3ed6d6")
 STEPS = (0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600)
 SNAP_PX = 8
@@ -115,6 +116,7 @@ class MixCanvas(QWidget):
     envelopeModeChanged = Signal(bool)       # the volume curves were switched on or off for editing
     playheadMoved = Signal(int)              # the user placed the playhead (frames)
     viewChanged = Signal()                   # zoom or scroll
+    playheadChanged = Signal()               # the playhead moved, for whatever reason (the ruler draws it too)
     layoutChanged = Signal()                 # rows were added or removed
     editStarting = Signal(str)               # before the first change of a drag: checkpoint, stop playback
     contextRequested = Signal(QPoint, object, int)      # global position, Hit, frame under the pointer
@@ -133,6 +135,7 @@ class MixCanvas(QWidget):
         self.selected: Optional[tuple[str, int]] = None
         self.snap = True
         self.envelope_mode = False
+        self.delete_outside = True                # dragging a curve point out of its clip deletes it (setting)
         self.rows: list[Row] = []
         self._total_h = 0
         self._drag: Optional[_Drag] = None
@@ -219,6 +222,7 @@ class MixCanvas(QWidget):
         for f in (old, self.playhead):
             x = int(self.frame_to_x(f))
             self.update(x - 4, 0, 9, self.height())
+        self.playheadChanged.emit()
 
     def set_envelope_mode(self, on: bool) -> None:
         if on != self.envelope_mode:
@@ -273,6 +277,10 @@ class MixCanvas(QWidget):
         pts += [QPointF(self.frame_to_x(c.start + f), self.env_y(r, v)) for f, v in c.envelope if 0 < f < c.length]
         pts.append(QPointF(r.right(), self.env_y(r, envelope_at(c.envelope, c.length))))
         return pts
+
+    def envelope_dots(self, c: MixClip, r: QRectF) -> list[QPointF]:
+        """Where the points of the clip's curve are drawn: one dot per point, and none anywhere else."""
+        return [QPointF(self.frame_to_x(c.start + f), self.env_y(r, v)) for f, v in c.envelope if 0 <= f <= c.length]
 
     @staticmethod
     def _near_segment(p: QPointF, a: QPointF, b: QPointF, reach: float) -> bool:
@@ -502,9 +510,8 @@ class MixCanvas(QWidget):
         if self.envelope_mode:
             p.setBrush(QColor("#ffffff"))
             p.setPen(QPen(theme.qcolor(t.warn), 2))
-            for f, v in c.envelope:
-                if 0 <= f <= c.length:
-                    p.drawEllipse(QPointF(self.frame_to_x(c.start + f), self.env_y(r, v)), ENV_POINT, ENV_POINT)
+            for dot in self.envelope_dots(c, r):
+                p.drawEllipse(dot, ENV_POINT, ENV_POINT)
 
     def _draw_envelope_line(self, p: QPainter, c: MixClip, r: QRectF, t) -> None:
         colour = theme.qcolor(t.warn)
@@ -618,8 +625,9 @@ class MixCanvas(QWidget):
         self.select(None)
         self.place_playhead(self.x_to_frame(pos.x()))
 
-    def _press_envelope(self, hit: Hit, pos: QPointF) -> None:
-        """Take a point of the volume curve, or - on the line between points - add one right there and take that."""
+    def _press_envelope(self, hit: Hit, pos: QPointF, *, add: bool = False) -> None:
+        """Take a point of the volume curve. On the line between points a single click only selects the clip; a double
+        click (`add`) puts a point right there, on the line, and takes it."""
         pr = self.project
         if pr is None:
             return
@@ -627,11 +635,14 @@ class MixCanvas(QWidget):
         self.select("clip", c.id)
         index, started = hit.index, False
         if hit.kind == "env-line":
-            if len(c.envelope) >= MAX_ENVELOPE_POINTS:
+            if not add:
                 return
             frame = max(0, min(c.length, self.x_to_frame(pos.x()) - c.start))
+            points = add_point(c.envelope, frame, c.length)
+            if points == c.envelope:                            # a point is there already, or no room for another
+                return
             self.editStarting.emit(self._drag_label("env-point"))
-            pr.set_envelope(c.id, [*c.envelope, (frame, envelope_at(c.envelope, frame))])
+            pr.set_envelope(c.id, points)
             index = next(i for i, (f, _) in enumerate(c.envelope) if f == frame)
             started = True                                      # the checkpoint is taken: this press is already an edit
             self.update()
@@ -704,21 +715,20 @@ class MixCanvas(QWidget):
         if pr is None or row is None:
             return ""
         c = pr.clip(d.id)
-        env, i = list(d.env), d.index
-        lo = max(0, env[i - 1][0] + 1) if i > 0 else 0
-        hi = min(c.length, env[i + 1][0] - 1) if i < len(env) - 1 else c.length
-        frame = d.frame
-        if lo <= hi:
-            wanted = self._snap(c.start + d.frame + dx, self._snap_points()) - c.start
-            frame = max(lo, min(hi, wanted))
-        per_level = self.env_px_per_level(self.clip_rect(c, row))
+        r = self.clip_rect(c, row)
+        if self.delete_outside and not r.adjusted(-DELETE_MARGIN, -DELETE_MARGIN, DELETE_MARGIN, DELETE_MARGIN).contains(pos):
+            pr.set_envelope(c.id, remove_point(d.env, d.index))      # shown at once; back inside, the point is back too
+            return tr("Release to delete the point")
+        wanted = self._snap(c.start + d.frame + dx, self._snap_points()) - c.start
+        per_level = self.env_px_per_level(r)
         level = max(0.0, min(ENVELOPE_MAX, d.level + (d.press.y() - pos.y()) / per_level))
         if self.snap:
             for stop in (0.0, 1.0):
                 if abs(level - stop) * per_level <= 4:
                     level = stop
-        env[i] = (frame, level)
+        env = move_point(d.env, d.index, wanted, level, c.length)
         pr.set_envelope(c.id, env)
+        frame, level = env[d.index]
         return f"{format_time((c.start + frame) / self.sr, short=True)}   {self._level_text(level)}"
 
     @staticmethod
@@ -741,7 +751,9 @@ class MixCanvas(QWidget):
         if self.project is None:
             return
         hit = self.hit_test(ev.position())
-        if hit.kind in ("clip", "gain"):
+        if hit.kind == "env-line" and ev.button() == Qt.MouseButton.LeftButton:
+            self._press_envelope(hit, ev.position(), add=True)
+        elif hit.kind in ("clip", "gain"):
             self.itemActivated.emit("clip", hit.id)
         elif hit.kind in ("effect",):
             self.itemActivated.emit("effect", hit.id)
@@ -832,6 +844,7 @@ class MixRuler(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         canvas.viewChanged.connect(self.update)
+        canvas.playheadChanged.connect(self.update)
 
     def paintEvent(self, event) -> None:
         t = theme.current()

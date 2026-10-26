@@ -30,6 +30,8 @@ VOLUME_RANGE = (-60.0, 12.0)         # dB, per line
 CLIP_GAIN_RANGE = (-30.0, 12.0)      # dB, per clip
 ENVELOPE_MAX = 2.0                   # the volume curve of a clip is a multiplier: 0 is silent, 1 leaves it alone, 2 is +6 dB
 MAX_ENVELOPE_POINTS = 256
+UNITY_G = 0.5                       # height of the curve's middle (0 = bottom, 1 = top): the clip is left as it is
+MIN_GAP = 1                         # frames between two points of a curve, so no segment has zero length
 HISTORY = 100
 PROJECT_VERSION = 1
 CUSTOM_FILTER_EFFECTS = frozenset({"custom_filter"})
@@ -143,6 +145,76 @@ def envelope_gain(first: int, count: int, points) -> Optional[np.ndarray]:
         return None
     k = np.arange(first, first + count, dtype=np.float64)
     return np.interp(k, [p[0] for p in points], [p[1] for p in points]).astype(np.float32)
+
+
+def g_to_gain(g: float) -> float:
+    """The multiplier for a height `g` on the curve (0 at the bottom, UNITY_G in the middle, 1 at the top): linear."""
+    return max(0.0, min(1.0, float(g))) * ENVELOPE_MAX
+
+
+def gain_to_g(gain: float) -> float:
+    return max(0.0, min(ENVELOPE_MAX, float(gain))) / ENVELOPE_MAX
+
+
+def points_from_fractions(sketch: Iterable, length: int) -> tuple[tuple[int, float], ...]:
+    """A curve given as (t, g) pairs, t being a fraction of the clip's `length`, as the points a clip stores."""
+    return clean_envelope((round(float(t) * length), g_to_gain(g)) for t, g in sketch)
+
+
+def add_point(points, frame: int, length: int) -> tuple[tuple[int, float], ...]:
+    """The curve with a point on the line at `frame`: the line passes through it, so nothing sounds different. A frame
+    that already has a point (or is within MIN_GAP of one) changes nothing."""
+    pts = clean_envelope(points)
+    frame = max(0, min(length, int(frame)))
+    if len(pts) >= MAX_ENVELOPE_POINTS or any(abs(f - frame) < MIN_GAP for f, _ in pts):
+        return pts
+    return clean_envelope([*pts, (frame, envelope_at(pts, frame))])
+
+
+def move_point(points, index: int, frame: int, level: float, length: int) -> tuple[tuple[int, float], ...]:
+    """Point `index` moved to (`frame`, `level`): it stays inside the clip and MIN_GAP away from its neighbours, which do
+    not move, so the curve changes only between them."""
+    pts = list(clean_envelope(points))
+    lo = max(0, pts[index - 1][0] + MIN_GAP) if index > 0 else 0
+    hi = min(length, pts[index + 1][0] - MIN_GAP) if index < len(pts) - 1 else length
+    frame = max(lo, min(hi, int(frame))) if lo <= hi else pts[index][0]
+    pts[index] = (frame, max(0.0, min(ENVELOPE_MAX, float(level))))
+    return tuple(pts)
+
+
+def remove_point(points, index: int) -> tuple[tuple[int, float], ...]:
+    """The curve without point `index`: its neighbours are joined by a straight line (no points left: the flat middle)."""
+    return tuple(p for i, p in enumerate(clean_envelope(points)) if i != index)
+
+
+def saturate(x: np.ndarray) -> np.ndarray:
+    """Samples limited to full scale, in place. A mix that is too loud is flattened at the top and never wraps around."""
+    return np.clip(x, -1.0, 1.0, out=x)
+
+
+def peak_of(clip: PieceSeq) -> float:
+    """The loudest sample of a clip, before any saturation."""
+    peak = 0.0
+    for chunk in clip.iter_chunks():
+        if len(chunk):
+            peak = max(peak, float(np.abs(chunk).max()))
+    return peak
+
+
+def saturate_clip(clip: Clip, cancel: Optional[CancelToken] = None) -> Clip:
+    """`clip` itself when nothing is over full scale, otherwise a copy that is limited to it."""
+    if peak_of(clip) <= 1.0:
+        return clip
+    writer = SourceWriter(clip.sr, clip.channels, label="mix")
+    try:
+        for chunk in clip.iter_chunks():
+            if cancel is not None:
+                cancel.check()
+            writer.write(saturate(np.array(chunk, np.float32)))
+    except BaseException:
+        writer.abort()
+        raise
+    return Clip.from_source(writer.finish())
 
 
 def _mix_range(jobs: list[tuple[MixClip, np.ndarray]], a: int, b: int, master: float = 1.0) -> np.ndarray:
@@ -487,8 +559,9 @@ class MixProject:
         return LiveMix(self, cache)
 
     def render(self, *, effects: bool = True, master: float = 1.0, progress: Optional[ProgressFn] = None,
-               cancel: Optional[CancelToken] = None) -> Clip:
-        """The whole mix: every audible line, then the effect spans applied where they sit."""
+               cancel: Optional[CancelToken] = None, saturate: bool = True) -> Clip:
+        """The whole mix: every audible line, then the effect spans applied where they sit. What is over full scale is
+        limited to it, as when it is played (`saturate=False` keeps the sum, to measure it with `peak_of`)."""
         spans = [e for e in self.effects if effects and not e.mute] if effects else []
         track_share = 0.7 if spans else 1.0
         current = self.render_tracks(master=master, progress=scaled(progress, 0.0, track_share), cancel=cancel)
@@ -503,6 +576,8 @@ class MixProject:
             piece = fx.run_effect(effect, span.params, current, a, b, progress=scaled(progress, lo, hi), cancel=cancel)
             pieces = slice_pieces(current.pieces, 0, a) + list(piece.pieces) + slice_pieces(current.pieces, b, total)
             current = Clip(pieces, self.sr, CHANNELS)
+        if saturate:
+            current = saturate_clip(current, cancel)
         if progress:
             progress(1.0)
         return current
@@ -646,11 +721,11 @@ class LiveMix:
 
     # ---- what the player calls
     def read(self, a: int, b: int) -> np.ndarray:
-        """Frames [a, b) of the mix: (b - a, 2) float32. Never waits for an effect."""
+        """Frames [a, b) of the mix: (b - a, 2) float32, limited to full scale like a built mix. Never waits for an effect."""
         a, b = max(0, a), min(self.frames, b)
         if b <= a:
             return np.zeros((0, CHANNELS), np.float32)
-        return self._compose(a, b, len(self._spans))
+        return saturate(self._compose(a, b, len(self._spans)))
 
     def _compose(self, a: int, b: int, upto: int) -> np.ndarray:
         out = _mix_range(self._jobs, a, b)

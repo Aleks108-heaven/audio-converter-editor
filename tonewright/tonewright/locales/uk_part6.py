@@ -35,10 +35,12 @@ MESSAGES = {
     "Delete clip": "Видалити кліп",
     "Delete this point": "Видалити цю точку",
     "Delete volume point": "Видалення точки гучності",
-    "Draw each clip's volume as a curve: click its line to add a point, drag a point up or down to change the volume "
-    "there, right-click a point to delete it (E)":
-        "Показати гучність кожного кліпу як криву: клацніть її лінію, щоб додати точку, тягніть точку вгору чи вниз, "
-        "щоб змінити гучність у цьому місці, клацніть точку правою кнопкою, щоб видалити її (E)",
+    "Draw each clip's volume as a curve: double-click its line to add a point, drag a point up or down to change the "
+    "volume there, drag it out of the clip or right-click it to delete it (E)":
+        "Показати гучність кожного кліпу як криву: двічі клацніть її лінію, щоб додати точку, тягніть точку вгору чи "
+        "вниз, щоб змінити гучність у цьому місці, витягніть її за межі кліпу або клацніть правою кнопкою, щоб видалити "
+        "її (E)",
+    "Release to delete the point": "Відпустіть, щоб видалити точку",
     "Delete the selection (Del)": "Видалити вибране (Del)",
     "Double-click to rename": "Двічі клацніть, щоб перейменувати",
     "Drag the clip so it overlaps the one it should blend with":

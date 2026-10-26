@@ -57,6 +57,20 @@ def drag(canvas, start, end):
     release(canvas, *end)
 
 
+def double_click(canvas, x, y):
+    ev = QMouseEvent(QEvent.Type.MouseButtonDblClick, QPointF(x, y), QPointF(x, y), Qt.MouseButton.LeftButton,
+                     Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    canvas.mouseDoubleClickEvent(ev)
+
+
+def double_click_drag(canvas, start, end):
+    """Double-click the line at `start` (which puts a point there) and, still holding, drag it to `end`."""
+    double_click(canvas, *start)
+    move(canvas, *start)
+    move(canvas, *end)
+    release(canvas, *end)
+
+
 def centre_of(canvas, clip):
     row = canvas.row_of("line", clip.line)
     r = canvas.clip_rect(clip, row)
@@ -469,6 +483,27 @@ def test_dragging_on_the_ruler_plays_what_is_under_the_pointer(mix, qapp):
     assert player.state == "stopped" and not mix.mix._scrubbing
 
 
+def test_dragging_the_ruler_backwards_moves_the_playhead_line_too(mix, qapp):
+    mix.mix.add_files(mix.files[:2])
+    ruler, player, canvas = mix.board.ruler, mix.mix.player, mix.canvas
+    repainted = []
+    canvas.playheadChanged.connect(lambda: repainted.append(1))
+    def at(seconds, kind):
+        x = (seconds - canvas.t0) * canvas.px_per_sec
+        ev = QMouseEvent(kind, QPointF(x, 5), QPointF(x, 5), Qt.MouseButton.LeftButton,
+                         Qt.MouseButton.NoButton if kind == QEvent.Type.MouseButtonRelease else Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.NoModifier)
+        {QEvent.Type.MouseButtonPress: ruler.mousePressEvent, QEvent.Type.MouseMove: ruler.mouseMoveEvent,
+         QEvent.Type.MouseButtonRelease: ruler.mouseReleaseEvent}[kind](ev)
+    at(2.0, QEvent.Type.MouseButtonPress)
+    test_ui.pump(qapp, 80)
+    at(1.0, QEvent.Type.MouseMove)                                      # back before where the scrub began
+    assert wait_until(qapp, lambda: abs(player.position - SR) < SR // 5)
+    test_ui.pump(qapp, 80)
+    assert canvas.playhead < 2 * SR - SR // 4 and repainted              # the dashed line left the frame the scrub began at
+    at(1.0, QEvent.Type.MouseButtonRelease)
+
+
 def test_clicking_the_ruler_while_playing_just_moves_the_playhead(mix, qapp):
     mix.mix.add_files(mix.files[:1])
     mix.mix.play(0)
@@ -702,12 +737,12 @@ def test_the_volume_curve_mode_follows_the_button_and_the_e_key(mix):
     assert not mix.canvas.envelope_mode and not btn.isChecked()
 
 
-def test_clicking_the_line_adds_a_point_and_dragging_it_down_makes_the_clip_quieter(mix):
+def test_double_clicking_the_line_adds_a_point_and_dragging_it_down_makes_the_clip_quieter(mix):
     clip, r = curve_setup(mix)
     c = mix.canvas
     x, y = r.center().x(), c.env_y(r, 1.0)
     assert c.hit_test(QPointF(x, y)).kind == "env-line"
-    drag(c, (x, y), (x, y + c.env_px_per_level(r) * 0.5))                       # down to half the level
+    double_click_drag(c, (x, y), (x, y + c.env_px_per_level(r) * 0.5))          # down to half the level
     assert len(clip.envelope) == 1
     frame, level = clip.envelope[0]
     assert frame == c.x_to_frame(x) - clip.start and level == pytest.approx(0.5, abs=0.02)
@@ -716,11 +751,14 @@ def test_clicking_the_line_adds_a_point_and_dragging_it_down_makes_the_clip_quie
     assert mix.mix.project.clip(clip.id).envelope == ()
 
 
-def test_clicking_the_line_without_moving_still_adds_a_point_that_can_be_undone(mix):
+def test_double_clicking_without_moving_adds_a_point_that_can_be_undone_and_a_single_click_adds_none(mix):
     clip, r = curve_setup(mix)
     c = mix.canvas
     x, y = r.center().x(), c.env_y(r, 1.0)
     press(c, x, y)
+    release(c, x, y)
+    assert clip.envelope == () and c.selected == ("clip", clip.id)              # one click only selects
+    double_click(c, x, y)
     release(c, x, y)
     assert len(clip.envelope) == 1 and clip.envelope[0][1] == pytest.approx(1.0)
     mix.mix.undo()
@@ -732,10 +770,10 @@ def test_points_are_dragged_in_time_but_never_past_their_neighbours(mix):
     c = mix.canvas
     x, y = c.frame_to_x(clip.start + SR), c.env_y(r, 1.0)
     assert c.hit_test(QPointF(x, y)).kind == "env-point" and c.hit_test(QPointF(x, y)).index == 1
-    drag(c, (x, y), (x + 5 * c.px_per_sec, y))                                  # far to the right: stops at the next point
+    drag(c, (x, y), (c.frame_to_x(clip.start + 2.9 * SR), y))                   # past the next point: stops just before it
     assert [f for f, _ in clip.envelope] == [SR // 2, 2 * SR - 1, 2 * SR]
     x, y = c.frame_to_x(clip.start + SR // 2), c.env_y(r, 1.0)
-    drag(c, (x, y), (x - 9 * c.px_per_sec, y))                                  # far to the left: stops at the clip's start
+    drag(c, (x, y), (r.left(), y))                                              # to the clip's start
     assert clip.envelope[0][0] == 0
 
 
@@ -744,12 +782,58 @@ def test_a_point_dragged_to_the_bottom_is_silent_and_snaps_to_unity_and_silence(
     c = mix.canvas
     c.snap = True
     x, y = c.frame_to_x(clip.start + SR), c.env_y(r, 1.0)
-    drag(c, (x, y), (x, y + c.env_px_per_level(r) * 1.97))
-    assert clip.envelope[0][1] == 0.0                                           # within a few px of the bottom: silence
+    drag(c, (x, y), (x, c.env_y(r, 0.0) + 3))                                   # a few px past silence, still inside the clip
+    assert clip.envelope[0][1] == 0.0
     drag(c, (x, c.env_y(r, 0.0)), (x, c.env_y(r, 0.0) - c.env_px_per_level(r) * 0.98))
     assert clip.envelope[0][1] == 1.0
     out = mix.mix.project.render()
     assert out.frames > 0
+
+
+def test_a_point_dragged_out_of_its_clip_is_deleted_in_one_undo_step(mix):
+    clip, r = curve_setup(mix, [(SR // 2, 1.0), (SR, 0.5), (2 * SR, 1.0)])
+    c = mix.canvas
+    x, y = c.frame_to_x(clip.start + SR), c.env_y(r, 0.5)
+    press(c, x, y)
+    move(c, x, y)
+    move(c, x, y + 20)                                                          # still near the clip
+    assert len(clip.envelope) == 3
+    move(c, x, r.bottom() + 40)                                                 # well below it
+    assert [f for f, _ in clip.envelope] == [SR // 2, 2 * SR]
+    move(c, x, y + 10)                                                          # and back: the point returns
+    assert len(clip.envelope) == 3
+    move(c, x, r.top() - 40)
+    release(c, x, r.top() - 40)
+    assert [f for f, _ in clip.envelope] == [SR // 2, 2 * SR] and mix.mix.project.undo_label == "Volume curve"
+    mix.mix.undo()
+    back = mix.mix.project.clip(clip.id).envelope
+    assert [f for f, _ in back] == [SR // 2, SR, 2 * SR] and back[1][1] == 0.5
+
+
+def test_deleting_by_dragging_out_can_be_switched_off(mix):
+    clip, r = curve_setup(mix, [(SR, 0.5)])
+    c = mix.canvas
+    c.delete_outside = False
+    x, y = c.frame_to_x(clip.start + SR), c.env_y(r, 0.5)
+    drag(c, (x, y), (x, r.bottom() + 40))
+    assert len(clip.envelope) == 1 and clip.envelope[0][1] == 0.0               # held at the bottom instead
+
+
+def test_the_sketch_is_drawn_as_exactly_13_dots_none_where_the_line_only_crosses_the_middle(mix):
+    from tonewright.core.mixer import points_from_fractions
+    from test_mixer import SKETCH, SKETCH_CROSSINGS
+    mix.mix.add_files(mix.files[:1])
+    clip = mix.mix.project.clips[0]
+    mix.mix.project.set_envelope(clip.id, points_from_fractions(SKETCH, clip.length))
+    c = mix.canvas
+    c.set_envelope_mode(True)
+    c.set_zoom(600)                                                             # wide enough to tell points 0.005 apart
+    r = c.clip_rect(clip, c.row_of("line", clip.line))
+    dots = c.envelope_dots(clip, r)
+    assert len(dots) == 13
+    for t in SKETCH_CROSSINGS:
+        x = c.frame_to_x(clip.start + t * clip.length)
+        assert all(abs(d.x() - x) > 1.0 for d in dots)                          # nothing where the line crosses the middle
 
 
 def test_the_curve_changes_what_is_built(mix):
@@ -758,7 +842,7 @@ def test_the_curve_changes_what_is_built(mix):
     loud = np.abs(p.render().read(SR, SR + 1000)).max()
     c = mix.canvas
     x, y = c.frame_to_x(clip.start + SR), c.env_y(r, 1.0)
-    drag(c, (x, y), (x, y + c.env_px_per_level(r) * 1.0))                       # the whole clip goes silent
+    double_click_drag(c, (x, y), (x, y + c.env_px_per_level(r) * 1.0))          # the whole clip goes silent
     assert loud > 0.01 and np.abs(p.render().read(SR, SR + 1000)).max() == 0.0
 
 

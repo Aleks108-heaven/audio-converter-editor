@@ -20,6 +20,8 @@ from .tasks import run_task
 from .widgets import divider, make_button, role_label
 from ..i18n import tr
 
+MIN_WIDTH = 580
+
 
 @dataclass
 class EffectContext:
@@ -195,7 +197,7 @@ class EffectDialog(QDialog):
         self.ctx = ctx
         self.setWindowTitle(tr(effect.name))
         self.setModal(True)
-        self.setMinimumWidth(580)
+        self.setMinimumWidth(MIN_WIDTH)
         self.controls: dict[str, ParamControl] = {}
         self.editors: list[Editor] = []
         self._loading = True
@@ -335,6 +337,7 @@ class EffectDialog(QDialog):
         buttons.addWidget(self.apply_btn)
         root.addLayout(buttons)
 
+        self._fit_width()
         self._timer = QTimer(self)
         self._timer.setInterval(160)
         self._timer.timeout.connect(self._poll_preview)
@@ -344,6 +347,11 @@ class EffectDialog(QDialog):
             ed.set_values(values)
         self._loading = False
         self._on_changed()
+
+    def _fit_width(self) -> None:
+        """An explicit minimum width switches the layout's own minimum off, so the button row would squeeze its
+        widgets (a longer translation, or "Update preview") instead of widening the dialog."""
+        self.setMinimumWidth(max(MIN_WIDTH, self.layout().minimumSize().width()))
 
     # ---- values
     def values(self) -> dict:
@@ -397,6 +405,7 @@ class EffectDialog(QDialog):
             self._preview_stale = True
             self.preview_btn.setText(tr("Update preview"))
             self.preview_btn.setIcon(icons.icon("refresh", 16))
+            self._fit_width()
 
     def _preset_chosen(self, index: int) -> None:
         data = self.presets.itemData(index)

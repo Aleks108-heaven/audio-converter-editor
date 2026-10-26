@@ -17,7 +17,8 @@ from ..audio.playback import Player
 from ..core import effects as fx
 from ..core import ffmpeg, ops
 from ..core.document import Clip, Document, PieceSeq
-from ..core.mixer import CHANNELS, DEFAULT_SR, LiveMix, MixClip, MixProject, custom_filters_in
+from ..core.mixer import (CHANNELS, DEFAULT_SR, LiveMix, MixClip, MixProject, custom_filters_in, peak_of, remove_point,
+                          saturate_clip)
 from ..core.source import Source, SourceWriter
 from ..core.timefmt import format_time
 from .accessibility import label_for
@@ -76,6 +77,7 @@ class MixController(QObject):
         board.ruler.scrubRequested.connect(self.scrub)
         board.ruler.scrubEnded.connect(self.end_scrub)
         c = board.canvas
+        c.delete_outside = bool(state.settings.get("mix_delete_outside"))
         c.selectionChanged.connect(self.refreshed)
         c.playheadMoved.connect(self._playhead_moved)
         c.filesDropped.connect(lambda files, line, frame: self.add_files(files, line, frame))
@@ -343,7 +345,7 @@ class MixController(QObject):
         if not 0 <= index < len(clip.envelope):
             return
         self.begin_edit("Delete volume point")
-        self.project.set_envelope(clip_id, [p for i, p in enumerate(clip.envelope) if i != index])
+        self.project.set_envelope(clip_id, remove_point(clip.envelope, index))
         self._refresh_all()
 
     def clear_envelope(self, clip_id: Optional[int] = None) -> None:
@@ -685,13 +687,8 @@ class MixController(QObject):
         self.stop()
 
         def job(progress, cancel):
-            clip = p.render(progress=progress, cancel=cancel)
-            peak = 0.0
-            for chunk in clip.iter_chunks():
-                if len(chunk):
-                    peak = max(peak, float(np.abs(chunk).max()))
-                cancel.check()
-            return clip, peak
+            clip = p.render(progress=progress, cancel=cancel, saturate=False)
+            return clip, peak_of(clip)
 
         try:
             ok, result = run_task(self.win, tr("Building the mix"), job,
@@ -709,6 +706,8 @@ class MixController(QObject):
                    "Lower the whole mix to prevent that?"))
             if answer == QMessageBox.StandardButton.Yes:
                 clip = self._scaled(clip, 0.98 / peak)
+            else:
+                clip = saturate_clip(clip)                       # as in the preview: flattened at full scale, never wrapped
         doc = Document(p.sr, CHANNELS, clip.pieces, name=self.main_ctl._unique_name(p.name or tr("Mix", "document")))
         item = self.main_ctl._add_document(doc)
         self.info(tr(f"Built {doc.name}: it is in the library"))
@@ -1022,9 +1021,9 @@ class MixPage(QWidget):
         self.dup_btn = self._tool("copy", tr("Duplicate the selected clip (Ctrl+D)"), c.duplicate_selected)
         self.cross_btn = self._tool("wand", tr("Cross-fade the selected clip with the one it overlaps"), c.crossfade_selected, text=tr("Crossfade"))
         self.del_btn = self._tool("trash", tr("Delete the selection (Del)"), c.delete_selected)
-        self.env_btn = self._tool("envelope", tr("Draw each clip's volume as a curve: click its line to add a point, drag a "
-                                                 "point up or down to change the volume there, right-click a point to "
-                                                 "delete it (E)"),
+        self.env_btn = self._tool("envelope", tr("Draw each clip's volume as a curve: double-click its line to add a point, "
+                                                 "drag a point up or down to change the volume there, drag it out of the "
+                                                 "clip or right-click it to delete it (E)"),
                                   lambda on: self.board.canvas.set_envelope_mode(on), checkable=True, text=tr("Volume curve"))
         self.board.canvas.envelopeModeChanged.connect(self.env_btn.setChecked)
         for b in (self.split_btn, self.dup_btn, self.cross_btn, self.env_btn, self.del_btn):

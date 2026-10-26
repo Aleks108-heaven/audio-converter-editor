@@ -7,7 +7,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH).parent
 FFMPEG_DIR = Path(os.environ["FFMPEG_DIR"])
-VERSION = os.environ.get("TONEWRIGHT_VERSION", "1.2.0")
+VERSION = os.environ.get("TONEWRIGHT_VERSION", "1.3.0")
 
 # Qt plugins are what decode pictures and talk to the window system, so only the ones the program uses are shipped
 # (the same short list as the Windows installer). Cover art is also restricted to JPEG/PNG/GIF/BMP in the code.

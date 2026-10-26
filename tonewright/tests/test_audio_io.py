@@ -298,6 +298,16 @@ def test_seek_is_heard_at_once_even_with_audio_already_queued(manual):
     np.testing.assert_array_equal(card.pull(500), doc.read(30000, 30500))
 
 
+def test_the_position_follows_a_seek_back_before_where_playback_began(manual):
+    manual.play(ramp_doc(40000).snapshot(), start=20000)
+    card = ManualOutput.instances[-1]
+    card.pull(300)
+    manual.seek(5000)
+    assert manual.position == 5000                           # not held at 20000, where this run started
+    card.pull(300)
+    assert manual.position == 5300
+
+
 def test_swap_while_looping_keeps_looping_inside_the_new_range(manual):
     doc = ramp_doc(6000)
     manual.play(doc.snapshot(), start=0, end=6000, loop=True, loop_range=(1000, 2000))

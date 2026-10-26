@@ -9,11 +9,29 @@ import pytest
 from tonewright.core import effects as fx
 from tonewright.core.common import CancelToken, Cancelled
 from tonewright.core.document import Clip
-from tonewright.core.mixer import (BLOCK, ENVELOPE_MAX, MAX_ENVELOPE_POINTS, MIN_CLIP, MixProject, balance_gains,
-                                    clean_envelope, custom_filters_in, envelope_at, fade_envelope)
+from tonewright.core.mixer import (BLOCK, ENVELOPE_MAX, MAX_ENVELOPE_POINTS, MIN_CLIP, MIN_GAP, MixProject,
+                                    add_point, balance_gains, clean_envelope, custom_filters_in, envelope_at,
+                                    envelope_gain, fade_envelope, g_to_gain, gain_to_g, move_point, peak_of,
+                                    points_from_fractions, remove_point, saturate_clip)
 from tonewright.core.source import Source
 
 SR = 44100
+
+# the hand-drawn sketch (sketch_points_check.svg): (t = fraction of the clip, g = height of the line, 0.5 = unchanged)
+SKETCH = [[0, 0.5], [0.08, 0.15], [0.11, 0.5], [0.14, 0.37], [0.32, 0.38], [0.37, 0.22], [0.38, 0.82], [0.45, 0.79],
+          [0.53, 0.01], [0.78, 0], [0.84, 0.77], [0.9, 0.77], [0.94, 0.5]]
+
+
+def middle_crossings(sketch) -> list[float]:
+    """The t at which the line passes through the middle between two points (not at a point)."""
+    out = []
+    for (t0, g0), (t1, g1) in zip(sketch, sketch[1:]):
+        if (g0 - 0.5) * (g1 - 0.5) < 0:
+            out.append(t0 + (t1 - t0) * (0.5 - g0) / (g1 - g0))
+    return out
+
+
+SKETCH_CROSSINGS = middle_crossings(SKETCH)
 
 
 def stereo(values, n: int = SR // 2) -> Clip:
@@ -352,6 +370,162 @@ def test_a_live_mix_hears_a_changed_curve(project):
     second = project.live(cache)
     assert np.allclose(first.read(0, 100), 1.0) and np.allclose(second.read(0, 100), 0.5)
     assert first._spans[0].key != second._spans[0].key                           # the effect is rendered again, not reused
+
+
+# ------------------------------------------------------------------ the point rule (pure functions)
+N = 100_000
+
+
+def levels(points, n: int = N) -> np.ndarray:
+    """The curve at every frame 0..n (1 where there is no curve)."""
+    gains = envelope_gain(0, n + 1, points)
+    return np.ones(n + 1, np.float32) if gains is None else gains
+
+
+def test_height_on_the_line_is_a_linear_multiplier_with_the_middle_unchanged_and_the_top_double():
+    assert (g_to_gain(0.0), g_to_gain(0.5), g_to_gain(1.0)) == (0.0, 1.0, 2.0)
+    assert g_to_gain(-1) == 0.0 and g_to_gain(7) == 2.0
+    assert g_to_gain(0.25) == pytest.approx(0.5) and gain_to_g(g_to_gain(0.8)) == pytest.approx(0.8)
+    assert gain_to_g(1.0) == 0.5 and gain_to_g(99) == 1.0
+
+
+def test_the_sketch_gives_13_points_and_none_where_the_line_only_crosses_the_middle():
+    points = points_from_fractions(SKETCH, N)
+    assert len(points) == 13 and [f for f, _ in points] == sorted({f for f, _ in points})
+    assert [i + 1 for i, (_, g) in enumerate(SKETCH) if g == 0.5] == [1, 3, 13]      # the ones that sit on the middle are vertices
+    assert len(SKETCH_CROSSINGS) == 3
+    frames = {f for f, _ in points}
+    assert all(round(t * N) not in frames for t in SKETCH_CROSSINGS)                  # no point at a crossing
+    for t in SKETCH_CROSSINGS:                                                         # yet the line does pass through unity there
+        assert envelope_at(points, t * N) == pytest.approx(1.0, abs=0.01)
+
+
+def test_the_curve_is_straight_between_points_and_holds_before_the_first_and_after_the_last():
+    points = points_from_fractions(SKETCH, N)
+    assert envelope_at(points, 0.08 * N) == pytest.approx(0.3) and envelope_at(points, 0.53 * N) == pytest.approx(0.02)
+    mid = envelope_at(points, 0.04 * N)                                               # halfway from point 1 (g .5) to point 2 (g .15)
+    assert mid == pytest.approx((1.0 + 0.3) / 2, abs=1e-3)
+    assert envelope_at(points, -500) == 1.0 and envelope_at(points, N * 3) == 1.0     # first and last points are both on the middle
+    held = points_from_fractions([[0.2, 0.25], [0.6, 0.75]], N)
+    assert envelope_at(held, 0) == 0.5 and envelope_at(held, N) == 1.5
+
+
+@pytest.mark.parametrize("frame", [0, 1, 7000, 8000, 11_000, 31_999, 53_000, 60_000, 93_999, 94_000, 99_999, N])
+def test_adding_a_point_on_the_line_does_not_change_the_curve(frame):
+    points = points_from_fractions(SKETCH, N)
+    added = add_point(points, frame, N)
+    assert (len(added) == len(points) + 1) == (frame not in {f for f, _ in points})
+    np.testing.assert_allclose(levels(added), levels(points), atol=1e-6)
+
+
+def test_a_point_added_outside_the_first_and_last_points_holds_their_level():
+    points = points_from_fractions([[0.2, 0.25], [0.6, 0.75]], N)
+    for frame in (5000, 90_000):
+        np.testing.assert_allclose(levels(add_point(points, frame, N)), levels(points), atol=1e-6)
+    assert add_point((), 500, N) == ((500, 1.0),)                                      # on a flat line: the middle
+
+
+def test_a_point_is_not_added_twice_at_one_time_or_beyond_the_limit():
+    points = ((1000, 0.5), (2000, 1.5))
+    assert add_point(points, 1000, N) == points and add_point(points, N + 50, N)[-1][0] == N
+    full = tuple((i * 10, 1.0) for i in range(MAX_ENVELOPE_POINTS))
+    assert add_point(full, 5, N) == full
+
+
+def test_moving_a_point_changes_the_curve_only_between_its_neighbours():
+    points = points_from_fractions(SKETCH, N)
+    moved = move_point(points, 6, points[6][0], 0.1, N)                                # point 7: from g .82 down to .05
+    before, after = levels(points), levels(moved)
+    lo, hi = points[5][0], points[7][0]
+    np.testing.assert_array_equal(before[:lo + 1], after[:lo + 1])
+    np.testing.assert_array_equal(before[hi:], after[hi:])
+    assert not np.allclose(before[lo:hi], after[lo:hi])
+    assert moved[:6] == points[:6] and moved[7:] == points[7:]
+
+
+def test_a_moved_point_stays_inside_its_neighbours_and_never_shares_a_time_with_one():
+    points = ((1000, 1.0), (5000, 0.5), (9000, 1.0))
+    assert move_point(points, 1, 99_999, 0.5, N)[1][0] == 9000 - MIN_GAP
+    assert move_point(points, 1, -5, 0.5, N)[1][0] == 1000 + MIN_GAP
+    assert move_point(points, 0, -5, 0.5, N)[0][0] == 0 and move_point(points, 2, 10 ** 9, 0.5, N)[2][0] == N
+    assert move_point(points, 1, 5000, 9.0, N)[1] == (5000, ENVELOPE_MAX) and move_point(points, 1, 5000, -1, N)[1] == (5000, 0.0)
+    for i in range(3):
+        frames = [f for f, _ in move_point(points, i, 5000, 1.0, N)]
+        assert all(b - a >= MIN_GAP for a, b in zip(frames, frames[1:]))
+    tight = ((10, 1.0), (10 + MIN_GAP, 0.5), (10 + 2 * MIN_GAP, 1.0))                  # no room at all: the time stays
+    assert move_point(tight, 1, 500, 0.2, N)[1] == (10 + MIN_GAP, 0.2)
+
+
+def test_removing_a_point_joins_its_neighbours_with_a_straight_line_and_the_last_one_gives_the_flat_middle():
+    points = points_from_fractions(SKETCH, N)
+    cut = remove_point(points, 6)
+    assert len(cut) == 12
+    (f0, v0), (f1, v1) = points[5], points[7]
+    k = np.arange(f0, f1 + 1)
+    np.testing.assert_allclose(levels(cut)[f0:f1 + 1], v0 + (v1 - v0) * (k - f0) / (f1 - f0), atol=1e-5)
+    assert remove_point(((500, 0.2),), 0) == () and envelope_gain(0, 10, remove_point(((500, 0.2),), 0)) is None
+    assert envelope_at(remove_point(((500, 0.2),), 0), 123) == 1.0
+
+
+def test_collinear_points_are_kept():
+    line = ((0, 1.0), (1000, 1.0), (2000, 1.0))
+    assert remove_point(line, 2) == line[:2] and add_point(line, 1500, N) == (*line[:2], (1500, 1.0), line[2])
+
+
+# ------------------------------------------------------------------ layers, saturation, one gain for preview and export
+def loud_sine(amp: float, n: int = SR) -> Clip:
+    wave = (amp * np.sin(np.arange(n) * 2 * np.pi * 440 / SR)).astype(np.float32)
+    return Clip.from_source(Source.from_array(np.stack([wave, wave], axis=1), SR))
+
+
+def test_the_same_file_twice_at_the_middle_sums_to_double_with_no_wraparound(project):
+    flat = points_from_fractions([[0, 0.5], [1, 0.5]], SR)
+    for amp in (0.4, 0.9):
+        project = MixProject(SR)
+        source = loud_sine(amp)
+        for _ in range(2):
+            clip = project.add_clip(project.add_line().id, source, 0)
+            project.set_envelope(clip.id, flat)
+        raw = audio(project.render(saturate=False))
+        np.testing.assert_allclose(raw, 2 * audio(source), atol=1e-6)               # exactly twice the file
+        assert peak_of(project.render(saturate=False)) == pytest.approx(2 * amp, abs=1e-3)
+        out = audio(project.render())
+        assert np.abs(out).max() <= 1.0
+        np.testing.assert_allclose(out, np.clip(2 * audio(source), -1, 1), atol=1e-6)      # flattened at the top, never wrapped
+        assert (np.sign(out) == np.sign(raw)).all()
+
+
+def test_saturating_leaves_a_quiet_clip_alone_and_flattens_a_loud_one_without_touching_the_original():
+    quiet, loud = loud_sine(0.5), loud_sine(1.7)
+    assert saturate_clip(quiet) is quiet
+    flat = saturate_clip(loud)
+    assert np.abs(audio(flat)).max() == 1.0 and peak_of(loud) == pytest.approx(1.7, abs=1e-3) and peak_of(flat) == 1.0
+
+
+def test_preview_and_export_are_the_same_sound_with_curves_levels_and_saturation(project):
+    sketch = points_from_fractions(SKETCH, SR)
+    a, b = project.add_line(), project.add_line()
+    first = project.add_clip(a.id, loud_sine(0.8), 0)
+    second = project.add_clip(b.id, loud_sine(0.7), SR // 5, gain_db=6.0)
+    project.set_envelope(first.id, sketch)
+    project.set_envelope(second.id, points_from_fractions([[0, 0.5], [0.4, 1.0], [0.8, 0.9]], SR))
+    project.set_clip(first.id, fade_in=2000)
+    exported = audio(project.render())
+    assert np.abs(exported).max() <= 1.0 and peak_of(project.render(saturate=False)) > 1.0       # saturation really was in play
+    live = project.live()
+    np.testing.assert_allclose(live.read(0, live.frames), exported, atol=1e-6)
+    pieces = [live.read(i, i + 7777) for i in range(0, live.frames, 7777)]                       # and in the blocks the card asks for
+    np.testing.assert_allclose(np.concatenate(pieces), exported, atol=1e-6)
+
+
+def test_adding_a_point_does_not_change_the_rendered_sound(project):
+    clip = project.add_clip(project.add_line().id, loud_sine(0.6), 0)
+    project.set_envelope(clip.id, points_from_fractions(SKETCH, clip.length))
+    before = audio(project.render())
+    for frame in (3000, 20_000, 33_000, 44_000, 1):
+        project.set_envelope(clip.id, add_point(clip.envelope, frame, clip.length))
+    assert len(clip.envelope) == 18
+    np.testing.assert_allclose(audio(project.render()), before, atol=1e-5)
 
 
 # ------------------------------------------------------------------ effect spans (gain: -6 dB is x0.501)

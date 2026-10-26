@@ -306,6 +306,18 @@ def test_effect_failure_is_reported_not_raised(loaded):
     assert not doc_of(loaded).can_undo
 
 
+def test_the_effect_dialog_widens_instead_of_squeezing_its_buttons(loaded):
+    from tonewright.ui.effect_dialog import EffectDialog
+    effect = fx.all_effects()[0]
+    dlg = EffectDialog(effect, None, loaded.ctl._effect_context(effect), loaded)
+    assert dlg.minimumWidth() >= dlg.layout().minimumSize().width()
+    dlg._previewing = True                                   # a changed value turns "Preview" into the longer "Update preview"
+    dlg.preview_btn.setText("Оновити прослуховування, довший за все решту разом узяте " * 2)
+    dlg._fit_width()
+    assert dlg.minimumWidth() >= dlg.layout().minimumSize().width() > 580
+    dlg.deleteLater()
+
+
 def test_every_effect_dialog_builds_and_returns_defaults(loaded):
     ctl = loaded.ctl
     for effect in fx.all_effects():
