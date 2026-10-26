@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 import numpy as np
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QTimer, Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGroupBox, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMessageBox, QScrollArea, QSlider, QSpinBox,
                                QVBoxLayout, QWidget)
@@ -351,7 +351,15 @@ class EffectDialog(QDialog):
     def _fit_width(self) -> None:
         """An explicit minimum width switches the layout's own minimum off, so the button row would squeeze its
         widgets (a longer translation, or "Update preview") instead of widening the dialog."""
-        self.setMinimumWidth(max(MIN_WIDTH, self.layout().minimumSize().width()))
+        wanted = max(MIN_WIDTH, self.layout().minimumSize().width())
+        if wanted != self.minimumWidth():
+            self.setMinimumWidth(wanted)
+
+    def event(self, ev) -> bool:
+        handled = super().event(ev)
+        if ev.type() == QEvent.Type.LayoutRequest and self.layout() is not None:      # a label changed: the layout knows now
+            self._fit_width()
+        return handled
 
     # ---- values
     def values(self) -> dict:
@@ -405,7 +413,6 @@ class EffectDialog(QDialog):
             self._preview_stale = True
             self.preview_btn.setText(tr("Update preview"))
             self.preview_btn.setIcon(icons.icon("refresh", 16))
-            self._fit_width()
 
     def _preset_chosen(self, index: int) -> None:
         data = self.presets.itemData(index)

@@ -310,11 +310,13 @@ def test_the_effect_dialog_widens_instead_of_squeezing_its_buttons(loaded):
     from tonewright.ui.effect_dialog import EffectDialog
     effect = fx.all_effects()[0]
     dlg = EffectDialog(effect, None, loaded.ctl._effect_context(effect), loaded)
-    assert dlg.minimumWidth() >= dlg.layout().minimumSize().width()
-    dlg._previewing = True                                   # a changed value turns "Preview" into the longer "Update preview"
-    dlg.preview_btn.setText("Оновити прослуховування, довший за все решту разом узяте " * 2)
-    dlg._fit_width()
-    assert dlg.minimumWidth() >= dlg.layout().minimumSize().width() > 580
+    dlg.show()                                               # the test platform is offscreen: nothing appears on the desktop
+    dlg.preview_btn.setText("Оновити прослуховування, ще довше, щоб не вміщатися")      # a label that used to be squeezed
+    pump(QApplication.instance(), 30)                        # the layout notices the new label
+    dlg.resize(100, 100)                                     # ask for far less than it needs
+    pump(QApplication.instance(), 30)
+    assert dlg.width() >= dlg.layout().minimumSize().width() and dlg.width() >= dlg.preview_btn.minimumSizeHint().width()
+    dlg.close()
     dlg.deleteLater()
 
 
