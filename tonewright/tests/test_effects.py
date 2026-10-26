@@ -85,7 +85,10 @@ def test_every_effect_runs_with_defaults_and_presets(effect):
     arr = (rng.standard_normal((SR, 2)) * 0.1).astype(np.float32)
     for params in [None, *effect.presets.values()]:
         out = run(effect.id, params, arr)
-        assert out.shape[1] == 2 and len(out) > 0 and np.isfinite(out).all(), (effect.id, params)
+        bad = np.argwhere(~np.isfinite(out))
+        assert out.shape[1] == 2 and len(out) > 0 and not len(bad), (
+            effect.id, params, f"{len(bad)} of {out.size} samples are not finite, at {bad[:4].tolist()} ... {bad[-2:].tolist()}",
+            out[~np.isfinite(out)][:4].tolist())
         expected = effect.out_frames(len(arr), SR, effect.clean(params))
         if effect.preserves_length(effect.clean(params)):
             assert len(out) == len(arr), (effect.id, params)
