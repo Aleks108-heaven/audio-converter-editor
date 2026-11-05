@@ -112,9 +112,18 @@ HOP = N_FFT // 4
 _WINDOW = np.sqrt(np.hanning(N_FFT + 1)[:-1]).astype(np.float32)
 
 
+# Far above any real recording (full scale is 1.0); keeps squared spectra inside float32.
+_SAFE_PEAK = 1e6
+
+
 def stft(x: np.ndarray) -> np.ndarray:
-    """(frames, bins) complex spectrogram; the signal is zero-padded by one window each side."""
-    x = np.asarray(x, dtype=np.float32)
+    """(frames, bins) complex spectrogram; the signal is zero-padded by one window each side.
+
+    NaN and infinity count as silence: reduce_noise carries its state from frame to frame, so a
+    single one would otherwise turn the rest of the block into NaN.
+    """
+    x = np.clip(np.nan_to_num(np.asarray(x, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0),
+                -_SAFE_PEAK, _SAFE_PEAK)
     tail = (-len(x)) % HOP
     padded = np.concatenate([np.zeros(N_FFT, np.float32), x, np.zeros(N_FFT + tail, np.float32)])
     frames = np.lib.stride_tricks.sliding_window_view(padded, N_FFT)[::HOP]
@@ -144,17 +153,42 @@ def noise_power(x: np.ndarray) -> np.ndarray:
     return _smooth_profile((np.abs(inner) ** 2).mean(axis=0))
 
 
+# The 10th percentile of power blurred over 3 frames x 5 bins sits at 0.51 of the true mean power
+# of steady noise (measured on white noise, 5 to 60 s); this puts it back.
+_FLOOR_BIAS = 1.95
+_CAP = 1.5          # slack allowed over the quiet end of the neighbourhood (a sloping noise floor)
+
+
+def _neighbour_floor(a: np.ndarray) -> np.ndarray:
+    """The quiet end (10th percentile) of each bin's neighbourhood, which widens with frequency."""
+    out = np.empty_like(a)
+    n = len(a)
+    for i in range(n):
+        w = max(6, i // 4)
+        out[i] = np.percentile(a[max(0, i - w): i + w + 1], 10.0)
+    return out
+
+
 def estimate_noise_power(x: np.ndarray, quietest: float = 0.1) -> np.ndarray:
-    """Guess the noise floor from the quietest tenth of the frames."""
+    """Guess the noise floor of a recording that has no pure-noise stretch.
+
+    Every frequency bin is judged on its own: the floor is how quiet that bin gets in its
+    quietest tenth of the time. That follows the gaps between notes and words instead of
+    taking whole quiet frames, which are music and would be removed along with the noise.
+    Notes and voices stand out from their neighbours while a noise floor is smooth and broad,
+    so a bin is never allowed to be much louder than the quiet end of the bins around it.
+    Dense music with no gaps at all cannot be told from noise this way; there the captured
+    noise sample is the reliable choice.
+    """
     spec = stft(x)
     power = np.abs(spec) ** 2
-    energy = power.sum(axis=1)
-    live = energy > 1e-14
+    live = power.sum(axis=1) > 1e-14
     if live.sum() < 8:
         return _smooth_profile(power.mean(axis=0) + 1e-12)
-    order = np.argsort(np.where(live, energy, np.inf))
-    take = max(4, int(live.sum() * quietest))
-    return _smooth_profile(power[order[:take]].mean(axis=0))
+    blurred = _box(_box(power[live], 3, 0), 5, 1)
+    floor = np.percentile(blurred, 100.0 * quietest, axis=0) * _FLOOR_BIAS
+    floor = np.minimum(floor, _CAP * _neighbour_floor(floor))
+    return _smooth_profile(floor + 1e-14)
 
 
 def _box(a: np.ndarray, k: int, axis: int) -> np.ndarray:
@@ -171,17 +205,44 @@ def _box(a: np.ndarray, k: int, axis: int) -> np.ndarray:
     return total / k
 
 
+def _smoothstep(x: np.ndarray) -> np.ndarray:
+    x = np.clip(x, 0.0, 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
+# Between these signal-to-noise ratios (dB) the reduction fades out to nothing: a sound that
+# stands clearly above the noise is the music or the voice, and is left exactly as it is.
+_PROTECT_FROM_DB = 6.0
+_PROTECT_TO_DB = 20.0
+
+
 def reduce_noise(x: np.ndarray, npow: np.ndarray, reduction_db: float, alpha: float,
                  smoothing: float) -> np.ndarray:
-    """Spectral-subtraction noise gate for one channel.
+    """Wiener-style noise reduction for one channel.
 
-    The gain is computed from power averaged over a few frames. Steady tones keep their
-    level, while the random spikes of the noise are averaged away, which is what causes
-    the warbling "musical noise" of naive spectral subtraction.
+    `alpha` scales the noise estimate and `smoothing` (0..1) sets how long the signal-to-noise
+    estimate remembers the previous frame ("decision-directed": a bin that was loud a moment
+    ago is judged as signal, which keeps voices and notes intact and the leftovers from
+    warbling). Bins well above the noise get a gain of exactly 1.
     """
     spec = stft(x)
-    power = _box((np.abs(spec) ** 2).astype(np.float32), 1 + 2 * int(round(smoothing * 3)), 0)
+    power = (np.abs(spec) ** 2).astype(np.float32)
+    noise = (np.asarray(npow, np.float32) * float(alpha) + 1e-14)[None, :]
+    post = power / noise                                   # a-posteriori SNR per bin
     floor = 10.0 ** (-reduction_db / 20.0)
-    gain = 1.0 - alpha * np.sqrt(npow)[None, :] / (np.sqrt(power) + 1e-12)
-    gain = np.maximum(gain, floor).astype(np.float32)
-    return istft(spec * gain, len(x))
+    beta = 0.85 + 0.12 * float(np.clip(smoothing, 0.0, 1.0))
+    gain = np.empty_like(post)
+    prior = np.empty_like(post)
+    memory = np.maximum(post[0] - 1.0, 0.0)               # |previous estimate|^2 / noise
+    for t in range(len(post)):
+        xi = beta * memory + (1.0 - beta) * np.maximum(post[t] - 1.0, 0.0)
+        g = np.maximum(xi / (1.0 + xi), floor)
+        memory = g * g * post[t]
+        gain[t] = g
+        prior[t] = xi
+    # a gain that jumps between neighbouring bins is what is heard as "musical noise"
+    gain = _box(gain, 3, 1)
+    snr_db = 10.0 * np.log10(prior + 1e-9)
+    keep = _smoothstep((snr_db - _PROTECT_FROM_DB) / (_PROTECT_TO_DB - _PROTECT_FROM_DB))
+    gain = 1.0 - (1.0 - gain) * (1.0 - keep)
+    return istft(spec * gain.astype(np.float32), len(x))

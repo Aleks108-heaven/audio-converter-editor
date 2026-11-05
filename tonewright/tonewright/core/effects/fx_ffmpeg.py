@@ -442,8 +442,11 @@ class FFTDenoise(FilterEffect):
     )
 
     def chain(self, p: dict, sr: int, channels: int) -> str:
-        return (f"afftdn=nr={_n(p['reduction'])}:nf={_n(p['floor'])}:nt=w:"
-                f"tn={1 if p['track'] else 0}")
+        # afftdn answers 2 * (sr // 80) samples (25 ms) late; feed it that much silence at the end
+        # and drop the same from the start so the sound stays where it was
+        late = 2 * (sr // 80)
+        return (f"apad=pad_len={late},afftdn=nr={_n(p['reduction'])}:nf={_n(p['floor'])}:nt=w:"
+                f"tn={1 if p['track'] else 0},atrim=start_sample={late},asetpts=N/SR/TB")
 
 
 @register

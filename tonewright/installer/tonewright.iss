@@ -1,6 +1,6 @@
 ; Tonewright installer. Build it with installer\build_installer.ps1 (it stages the files first).
 #ifndef AppVersion
-  #define AppVersion "1.3.0"
+  #define AppVersion "1.4.0"
 #endif
 #ifndef StageDir
   #define StageDir "build\stage"

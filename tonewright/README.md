@@ -8,7 +8,7 @@ audiobook maker), in one window, with its own look and its own way of working.
 
 ## Install it
 
-Run **`Tonewright-Setup-1.3.0.exe`** from the
+Run **`Tonewright-Setup-1.4.0.exe`** from the
 [latest release](https://github.com/Aleks108-heaven/audio-converter-editor/releases/latest) (or build it yourself with
 `installer\build_installer.ps1`, see below). It installs into
 `C:\Program Files\Tonewright` (Windows asks for administrator approval once), so only an administrator can change the
@@ -24,12 +24,12 @@ download first, then choose *More info > Run anyway*. The checksum is in the `.s
 the release page:
 
 ```powershell
-Get-FileHash .\Tonewright-Setup-1.3.0.exe -Algorithm SHA256     # must equal the value in Tonewright-Setup-1.3.0.exe.sha256
+Get-FileHash .\Tonewright-Setup-1.4.0.exe -Algorithm SHA256     # must equal the value in Tonewright-Setup-1.4.0.exe.sha256
 ```
 
 ### On a Mac (M1 and newer)
 
-Download **`Tonewright-1.3.0-arm64.dmg`** and `SHA256SUMS.txt` from the
+Download **`Tonewright-1.4.0-arm64.dmg`** and `SHA256SUMS.txt` from the
 [latest release](https://github.com/Aleks108-heaven/audio-converter-editor/releases/latest) (check the file against the
 sums with `shasum -a 256`). Open the `.dmg` and drag **Tonewright** onto **Applications**. FFmpeg is inside the app.
 GitHub builds the same file on a real Apple Silicon Mac for every change (the **Actions** tab, latest **macOS** run,
@@ -132,7 +132,7 @@ FFmpeg audio filter chain (for example `lowpass=f=3000,volume=2`).
   * Space: Reverb, Echo
   * Equalizer & filters: 10-band Graphic EQ, 4-band Parametric EQ, Low/High/Band filters, Bass & Treble
   * Dynamics: Compressor, Limiter, Noise Gate
-  * Restoration: Noise Reduction (learns a noise sample), Quick Denoise, Click & Clip Repair, Hum Removal, Remove DC Offset
+  * Restoration: Noise Reduction (learns a noise sample, or finds the noise floor itself and leaves the music and voices alone), Quick Denoise, Click & Clip Repair, Hum Removal, Remove DC Offset
   * Channels: Balance, Channel Mixer, Vocal Remover
 * **Generate:** silence, tones and sweeps (sine/square/triangle/saw), white/pink/brown noise, dial tones,
   and speech from the voices installed in Windows.

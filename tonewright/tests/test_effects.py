@@ -388,6 +388,62 @@ def test_noise_reduction_blocks_join_without_clicks():
     assert float(np.abs(np.diff(seam)).max()) < 3 * float(np.abs(np.diff(ref)).max())
 
 
+def _continuous_music(seconds: float = 8.0) -> np.ndarray:
+    """Notes with harmonics that overlap all the time: there is never a pause with only noise."""
+    n = int(seconds * SR)
+    t = np.arange(n) / SR
+    x = np.zeros(n)
+    for i, f0 in enumerate((220.0, 277.2, 329.6, 440.0)):
+        env = 0.5 + 0.5 * np.sin(2 * np.pi * (0.35 + 0.1 * i) * t + i)
+        for h in range(1, 12):
+            x += env * (0.1 / h) * np.sin(2 * np.pi * f0 * h * t + h)
+    return x.astype(np.float32)[:, None]
+
+
+def test_noise_reduction_leaves_music_without_noise_alone():
+    music = _continuous_music()
+    out = run("noise_reduction", None, music)[:, 0]
+    rms_in = float(np.sqrt((music[:, 0] ** 2).mean()))
+    assert db(float(np.sqrt((out ** 2).mean()))) == pytest.approx(db(rms_in), abs=0.5)
+    for f in (220.0, 440.0, 880.0, 1760.0):
+        assert db(amp_at(out, f)) == pytest.approx(db(amp_at(music[:, 0], f)), abs=0.5), f
+
+
+def test_noise_reduction_auto_keeps_the_music_and_takes_the_noise():
+    music = _continuous_music()
+    rng = np.random.default_rng(8)
+    noise = (rng.standard_normal(music.shape) * 10 ** (-42 / 20)).astype(np.float32)
+    out = run("noise_reduction", None, music + noise)[:, 0]
+    clean, noisy = music[:, 0], (music + noise)[:, 0]
+    err_in = float(np.sqrt(((noisy - clean) ** 2).mean()))
+    err_out = float(np.sqrt(((out - clean) ** 2).mean()))
+    assert db(err_out) < db(err_in) - 3
+    for f in (220.0, 440.0, 880.0):
+        assert db(amp_at(out, f)) == pytest.approx(db(amp_at(clean, f)), abs=0.5), f
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf, 1e30])
+def test_noise_reduction_does_not_spread_a_bad_sample(bad):
+    music = _continuous_music(4.0)
+    music[SR, 0] = bad
+    out = run("noise_reduction", None, music)[:, 0]
+    assert np.isfinite(out).all()
+    assert float(np.abs(out[SR + 20_000:]).max()) < 2.0                   # the music after it is still music
+
+
+def test_quick_denoise_does_not_move_the_sound():
+    rng = np.random.default_rng(2)
+    n = SR * 4
+    t = np.arange(n) / SR
+    x = (0.3 * np.sin(2 * np.pi * 300 * t) * (1 + np.sin(2 * np.pi * 1.3 * t))
+         + 0.2 * rng.standard_normal(n) * (np.sin(2 * np.pi * 0.7 * t) > 0)).astype(np.float32)
+    out = run("denoise_fft", None, x[:, None])[:, 0]
+    assert len(out) == n
+    xc = np.fft.irfft(np.fft.rfft(out, 2 * n) * np.conj(np.fft.rfft(x, 2 * n)))
+    k = int(np.argmax(np.concatenate([xc[:n], xc[-n:]])))
+    assert (k if k < n else k - 2 * n) == 0
+
+
 def test_stft_roundtrip_is_transparent():
     rng = np.random.default_rng(0)
     x = rng.standard_normal(10_000).astype(np.float32)

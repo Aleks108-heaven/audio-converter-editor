@@ -73,7 +73,7 @@ class NoiseReduction(Effect):
     editor = "noise_profile"
 
     _BLOCK = 1 << 20
-    _OVERLAP = 2 * dsp.N_FFT
+    _OVERLAP = 16 * dsp.N_FFT             # the gain estimate remembers ~30 frames; let it settle before a block's kept part
 
     def process(self, ctx: Ctx) -> None:
         p = ctx.params
@@ -84,7 +84,7 @@ class NoiseReduction(Effect):
         else:
             probe = ctx.read_full(0, min(ctx.span, 90 * ctx.sr))
             profiles = [dsp.estimate_noise_power(probe[:, c]) for c in range(ch)]
-        alpha = 0.6 + 0.35 * p["sensitivity"]
+        alpha = 0.8 + 0.12 * p["sensitivity"]
         smoothing = p["smoothing"] / 100.0
         for start in range(0, ctx.frames, self._BLOCK):
             ctx.check()
